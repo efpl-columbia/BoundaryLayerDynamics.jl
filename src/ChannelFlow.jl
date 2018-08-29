@@ -1,9 +1,10 @@
 module ChannelFlow
 
-import LinearAlgebra
+import LinearAlgebra, MPI
 
 using FFTW, TimerOutputs
 
+include("mpi.jl")
 include("advection.jl")
 include("pressure_solver.jl")
 

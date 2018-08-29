@@ -1,6 +1,6 @@
 using ChannelFlow, Test
 
-import LinearAlgebra
+import LinearAlgebra, MPI
 
 println("Testing ChannelFlow.jl...")
 
@@ -72,7 +72,7 @@ end
 
     # run again, testing performance with preallocated output
     t, t_st = 0.0, 0.0
-    for i=1:ceil(Int, 1e7/N)
+    for i=1:ceil(Int, 1e6/N)
         t    += @elapsed LinearAlgebra.ldiv!(x, Â, b)
         t_st += @elapsed LinearAlgebra.ldiv!(x, T, b)
     end
@@ -81,10 +81,13 @@ end
 end
 
 @testset "Simple Channel Flow" begin
-    ChannelFlow.channelflow(
+    MPI.Init()
+    (MPI.Comm_size(MPI.COMM_WORLD) > 1 ? ChannelFlow.channelflow_mpi :
+        ChannelFlow.channelflow)(
             (lx=2π, ly=2π, lz=1, nx=64, ny=64, nz=64),
             (dt=1e-3, nt=3),
             (x,y,z) -> 0.0,#1.0 + sin(z),
         )
+    MPI.Finalize()
     @test true # only test that everything returns without error
 end

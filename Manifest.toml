@@ -7,6 +7,12 @@ version = "0.3.2"
 [[Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 
+[[BinDeps]]
+deps = ["Compat", "Libdl", "SHA", "URIParser"]
+git-tree-sha1 = "12093ca6cdd0ee547c39b1870e0c9c3f154d9ca9"
+uuid = "9e28174c-4ba2-5203-b857-d8d62c4213ee"
+version = "0.8.10"
+
 [[BinaryProvider]]
 deps = ["Libdl", "Pkg", "SHA", "Test"]
 git-tree-sha1 = "b530fbeb6f41ab5a83fbe3db1fcbe879334bcd2d"
@@ -72,6 +78,12 @@ uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 [[Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
+[[MPI]]
+deps = ["BinDeps", "Compat", "Distributed", "Libdl", "Pkg", "Random", "Test"]
+git-tree-sha1 = "273e64c67e11665a4602c048c153f008bd0340e1"
+uuid = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+version = "0.7.0"
+
 [[Markdown]]
 deps = ["Base64"]
 uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
@@ -130,6 +142,12 @@ uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 deps = ["Crayons", "Printf", "Test", "Unicode"]
 git-tree-sha1 = "89a9bd610d6bfd62a7c2b85112762b99b979fe5f"
 uuid = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
+version = "0.4.0"
+
+[[URIParser]]
+deps = ["Test", "Unicode"]
+git-tree-sha1 = "6ddf8244220dfda2f17539fa8c9de20d6c575b69"
+uuid = "30578b45-9adc-5946-b283-645ec420af67"
 version = "0.4.0"
 
 [[UUIDs]]
