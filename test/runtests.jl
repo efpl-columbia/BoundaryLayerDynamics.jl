@@ -18,12 +18,18 @@ function test_basics()
     @test p.vel_hat[1][1,2,0] == 0
 
     p.vel_hat[1][:,:,1:end-1] .= 1
-    CF.set_bc_uvp!(p.vel_hat[1], CF.DirichletBC(0.0), CF.DirichletBC(0.0))
+    CF.set_lower_bc!(p.vel_hat[1], p.lower_bc[1])
+    CF.set_upper_bc!(p.vel_hat[1], p.upper_bc[1])
     @test p.vel_hat[1][1,2,0] == -1
     @test p.vel_hat[1][1,2,end] == -1
 
     CF.add_laplacian_fd!(p.rhs_hat[1], p.vel_hat[1], CF.DerivativeFactors(gd))
     @test p.rhs_hat[1][1,1,1] ≈ -2*64^2 # Laplacian at boundary for kx=ky=0
+
+    CF.initialize!(p, (x,y,z) -> cos(x))
+    @test all(p.vel_hat[1][2,1,1:end-1] .≈ 0.5)
+    @test p.vel_hat[1][2,1,0] ≈ -0.5
+    @test p.vel_hat[1][2,1,end] ≈ -0.5
 end
 
 @testset "Basics" begin

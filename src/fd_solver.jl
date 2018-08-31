@@ -1,3 +1,25 @@
+abstract type BoundaryCondition{T} end
+struct DirichletBC{T} <: BoundaryCondition{T} value::T end
+struct NeumannBC{T} <: BoundaryCondition{T}
+    value::T # values has δz premultiplied
+    NeumannBC(value::T, δz::T) where T= new{T}(value * δz)
+end
+
+struct BigTransform{T<:SupportedReals}
+    n::Tuple{Int,Int,Int}
+    plan_fwd::FFTW.rFFTWPlan{T,FFTW.FORWARD,false,3}
+    plan_bwd::FFTW.rFFTWPlan{Complex{T},FFTW.BACKWARD,false,3}
+    buffer_pd::Array{T,3}
+    buffer_fd::Array{Complex{T},3}
+    function BigTransform(gd::Grid{T}) where T
+        n = (3*div(gd.n[1],2), 3*div(gd.n[2],2), gd.n[3])
+        buffer_pd = zeros(T, n)
+        buffer_fd = zeros(Complex{T}, div(n[1],2)+1, n[2], n[3])
+        new{T}(n, plan_rfft(buffer_pd, (1,2)), plan_brfft(buffer_fd, n[1], (1,2)),
+            buffer_pd, buffer_fd)
+    end
+end
+
 """
 This is a new attempt at how to best implement the channel flow DNS in Julia.
 This time, we compute everything in frequency domain, only going back to the
@@ -16,53 +38,62 @@ struct ChannelFlowProblem{T<:SupportedReals}
     vel_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
     p_hat::OffsetArray{Complex{T},3,Array{Complex{T},3}}
     rhs_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
+    lower_bc::NTuple{3,BoundaryCondition{T}}
+    upper_bc::NTuple{3,BoundaryCondition{T}}
+    forcing::NTuple{3,T}
+    big_tf::BigTransform{T}
 
-    ChannelFlowProblem(grid::Grid{T}) where T = new{T}(
-            grid,
+    ChannelFlowProblem(grid::Grid{T}, lower_bc::NTuple{3,BoundaryCondition{T}},
+            upper_bc::NTuple{3,BoundaryCondition{T}}, forcing::NTuple{3,T},
+            ) where T = new{T}(grid,
             map(i -> make_array_fd(grid), (1,2,3)), # vel_hat
             make_array_fd(grid), # phat
             map(i -> make_array_fd(grid), (1,2,3)), # rhs_hat
+            lower_bc, upper_bc, forcing, BigTransform(grid),
         )
 end
 
+noslip(T) = (DirichletBC{T}(zero(T)), DirichletBC{T}(zero(T)),
+        DirichletBC{T}(zero(T)))
+freeslip(T) = (NeumannBC{T}(zero(T), zero(T)), NeumannBC{T}(zero(T), zero(T)),
+        DirichletBC{T}(zero(T)))
+
+ChannelFlowProblem(grid::Grid{T}) where T = ChannelFlowProblem(grid,
+        noslip(T), noslip(T), (one(T), zero(T), zero(T)))
+
 initialize!(cf::ChannelFlowProblem, u::Tuple) = initialize!(cf, u...)
 initialize!(cf::ChannelFlowProblem{T}, u0) where T =
-    initialize!(cf, u0, v0 = (x,y,z) -> zero(T))
+    initialize!(cf, u0, (x,y,z) -> zero(T))
 initialize!(cf::ChannelFlowProblem{T}, u0, v0) where T =
-    initialize!(cf, u0, v0, w0 = (x,y,z) -> zero(T))
+    initialize!(cf, u0, v0, (x,y,z) -> zero(T))
 
 # nodes are centered in horizontal direction, centered in vertical for uvp-nodes
 # TODO: decide whether nodes should be centered or start at x=0 and y=0
 # - advantages centered: more like finite volume cells, no asymmetry left/right
 # - advantages zero: works for different grid spacing (origin is the same)
-@inline coord(i, δ, ::Val{uvp}) = (δ[1] * (2*i[1]-1)/2,
-                                   δ[2] * (2*i[2]-1)/2,
-                                   δ[3] * (2*i[3]-1)/2)
-@inline coord(i, δ, ::Val{w})   = (δ[1] * (2*i[1]-1)/2,
-                                   δ[2] * (2*i[2]-1)/2,
-                                   δ[3] * (i[3]-1))
+@inline coord(i, δ, ::Val{:uvp}) = (δ[1] * (i[1]-1),
+                                    δ[2] * (i[2]-1),
+                                    δ[3] * (2*i[3]-1)/2)
+@inline coord(i, δ, ::Val{:w})   = (δ[1] * (i[1]-1),
+                                    δ[2] * (i[2]-1),
+                                    δ[3] * (i[3]-1))
 
-function initialize!(cf::ChannelFlowProblem{T}, u0, v0, w0)
+function initialize!(cf::ChannelFlowProblem, u0, v0, w0)
+    δ_big = cf.grid.l ./ cf.big_tf.n
+    for (vel_hat, vel_0, nodes) in zip(cf.vel_hat, (u0, v0, w0), (Val(:uvp), Val(:uvp), Val(:w)))
+        initialize!(vel_hat, vel_0, δ_big, nodes, cf.big_tf.plan_fwd,
+                cf.big_tf.buffer_pd, cf.big_tf.buffer_fd)
+    end
 
-    broadcast!(initialize!, cf.vel_hat, (u0, v0, w0), δ_big, (Val(:uvp),
-            Val(:uvp), Val(:w)), plan_big_fwd, buffer_big_pd, buffer_big_fd)
+    apply_bcs!(cf)
 end
 
 function initialize!(vel_hat, vel_0, δ_big, nodes, plan_big_fwd, buffer_big_pd, buffer_big_fd)
     fill!(vel_hat, zero(eltype(vel_hat)))
     for i in CartesianIndices(buffer_big_pd)
-        buffer_big_pd[i] = vel_0(coord(i, δ_big, nodes))
+        buffer_big_pd[i] = vel_0(coord(i, δ_big, nodes)...)
     end
-    add_fft_dealiased!(rhs_hat, buffer_big_pd, plan_big_fwd, buffer_big_fd)
-end
-
-abstract type BoundaryCondition end
-struct DirichletBC{T} <: BoundaryCondition
-    val::T
-end
-struct NeumannBC{T} <: BoundaryCondition
-    val::T
-    δz::T
+    add_fft_dealiased!(vel_hat, buffer_big_pd, plan_big_fwd, buffer_big_fd)
 end
 
 struct DerivativeFactors{T<:SupportedReals}
@@ -76,6 +107,7 @@ struct DerivativeFactors{T<:SupportedReals}
     )
 end
 
+
 make_array_fd(gd::Grid{T}) where T = OffsetArray(zeros(Complex{T},
         div(gd.n[1],2)+1, gd.n[2], gd.n[3]+2),
         1:div(gd.n[1],2)+1, 1:gd.n[2], 0:gd.n[3]+1)
@@ -83,18 +115,40 @@ make_array_fd(gd::Grid{T}) where T = OffsetArray(zeros(Complex{T},
 @inline innerindices(A::OffsetArray) = CartesianIndices((1:size(A,1),
         1:size(A,2), 1:size(A,3)-2))
 
-# TODO: make this work properly with non-zero boundary conditions
-function set_bc_uvp!(vel_hat, bc_bottom::BoundaryCondition, bc_top::BoundaryCondition)
-    if bc_bottom isa DirichletBC
-        @. vel_hat[:,:,0] = 2 * bc_bottom.val - vel_hat[:,:,1]
-    else
-        @. vel_hat[:,:,0] = vel_hat[:,:,1] - bc_bottom.val * bc_bottom.δz
-    end
-    if bc_top isa DirichletBC
-        @. vel_hat[:,:,end] = 2 * bc_top.val - vel_hat[:,:,1]
-    else
-        @. vel_hat[:,:,end] = vel_hat[:,:,1] + bc_top.val * bc_top.δz
-    end
+# uniform Dirichlet boundary conditions for u- and v-velocities
+function set_lower_bc!(vel_hat, bc::DirichletBC) # (u[0] + u[1]) / 2 = value
+    @views vel_hat[:,:,0] .= -vel_hat[:, :, 1]
+    vel_hat[1,1,0] += 2 * bc.value
+end
+function set_upper_bc!(vel_hat, bc::DirichletBC) # (u[end-1] + u[end]) / 2 = value
+    @views vel_hat[:,:,end] .= -vel_hat[:,:,end-1]
+    vel_hat[1,1,end] += 2 * bc.value
+end
+
+# uniform Neumann boundary conditions for u- and v-velocities
+set_lower_bc!(vel_hat, bc::NeumannBC) = @views vel_hat[:,:,0] .=
+        vel_hat[:,:,1] - bc.value # value is multiplied by δ[3]
+set_upper_bc!(vel_hat, bc::NeumannBC) = @views vel_hat[:,:,end] .=
+        vel_hat[:,:,end-1] + bc.value # value is multiplied by δ[3]
+
+# uniform Dirichlet boundary conditions for w-velocity (only Dirichlet supported)
+function set_lower_bc_w!(vel_hat, bc::DirichletBC)
+    vel_hat[:,:,1] .= zero(eltype(vel_hat))
+    vel_hat[1,1,1] = bc.value
+end
+function set_upper_bc_w!(vel_hat, bc::DirichletBC)
+    vel_hat[:,:,end] .= zero(eltype(vel_hat))
+    vel_hat[1,1,end] = bc.value
+end
+
+function apply_bcs!(cf::ChannelFlowProblem)
+    set_lower_bc!(cf.vel_hat[1], cf.lower_bc[1])
+    set_upper_bc!(cf.vel_hat[1], cf.upper_bc[1])
+    set_lower_bc!(cf.vel_hat[2], cf.lower_bc[2])
+    set_upper_bc!(cf.vel_hat[2], cf.upper_bc[2])
+    set_lower_bc_w!(cf.vel_hat[3], cf.lower_bc[3])
+    set_upper_bc_w!(cf.vel_hat[3], cf.upper_bc[3])
+    cf
 end
 
 """
@@ -160,12 +214,16 @@ function add_fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
     kx_max = size(field_hat,1) - 2 # [0, 1…kmax, nyquist]
     ky_max = div(ny,2) - 1 # [0, 1…kmax, nyquist, -kmax…1]
 
+    # fft normalization factor 1/(nx*ny) is applied whenever forward transform
+    # is performed
+    fft_factor = 1 / (size(field_big,1) * size(field_big,2))
+
     for i in innerindices(field_hat)
         if i[1] == ky_max+2 || i[2] == ky_max+2
             field_hat[i] += 0
         else
-            field_hat[i] += i[2] <= 1+ky_max ? buffer_big_fd[i] :
-                buffer_big_fd[i[1], i[2] + (ny_big - ny), i[3]]
+            field_hat[i] += i[2] <= 1+ky_max ? buffer_big_fd[i] * fft_factor :
+                buffer_big_fd[i[1], i[2] + (ny_big - ny), i[3]] * fft_factor
         end
     end
     field_hat

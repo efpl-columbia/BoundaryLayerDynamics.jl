@@ -20,6 +20,7 @@ Grid(n::Integer, l::NTuple{3,Real}) = Grid((n, n, n), l)
 Grid(n::NTuple{3,Integer}, l::NTuple{3,Real}) =
         Grid(map(ni -> convert(Int, ni), n), map(li -> convert(Float64, li), l))
 
+include("fd_solver.jl")
 include("mpi.jl")
 include("advection.jl")
 include("pressure_solver.jl")
