@@ -2,7 +2,35 @@ using ChannelFlow, Test
 
 import LinearAlgebra, MPI
 
+CF = ChannelFlow
+
 println("Testing ChannelFlow.jl...")
+
+function test_basics()
+
+    @test all(CF.wavenumbers(8) .== (0,1,2,3,0,-3,-2,-1))
+    @test all(CF.wavenumbers(9) .== (0,1,2,3,4,-4,-3,-2,-1))
+
+    gd = CF.Grid(64)
+    @test all(gd.δ .== (π/32, π/32, 1/64))
+
+    p = CF.ChannelFlowProblem(gd)
+    @test p.vel_hat[1][1,2,0] == 0
+
+    p.vel_hat[1][:,:,1:end-1] .= 1
+    CF.set_bc_uvp!(p.vel_hat[1], CF.DirichletBC(0.0), CF.DirichletBC(0.0))
+    @test p.vel_hat[1][1,2,0] == -1
+    @test p.vel_hat[1][1,2,end] == -1
+
+    CF.add_laplacian_fd!(p.rhs_hat[1], p.vel_hat[1], CF.DerivativeFactors(gd))
+    @test p.rhs_hat[1][1,1,1] ≈ -2*64^2 # Laplacian at boundary for kx=ky=0
+end
+
+@testset "Basics" begin
+    test_basics()
+end
+
+exit()
 
 @testset "Horizontal Derivatives" begin
 

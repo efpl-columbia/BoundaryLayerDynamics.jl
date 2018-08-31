@@ -2,7 +2,7 @@ module ChannelFlow
 
 import LinearAlgebra, MPI
 
-using FFTW, TimerOutputs
+using OffsetArrays, FFTW, TimerOutputs
 
 SupportedReals = Union{Float32,Float64}
 
