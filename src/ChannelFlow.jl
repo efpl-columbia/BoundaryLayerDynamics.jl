@@ -4,6 +4,22 @@ import LinearAlgebra, MPI
 
 using FFTW, TimerOutputs
 
+SupportedReals = Union{Float32,Float64}
+
+struct Grid{T<:SupportedReals} # only allow Float64 for now
+    n::Tuple{Int,Int,Int}
+    l::Tuple{T,T,T}
+    δ::Tuple{T,T,T}
+    k::Tuple{Array{Int,1},Array{Int,1}}
+    Grid(n::Tuple{Int,Int,Int}, l::Tuple{T,T,T}) where T<:SupportedReals = new{T}(
+            n, l, l./n, (wavenumbers(n[1])[1:div(n[1],2)+1], wavenumbers(n[2])))
+end
+
+Grid(n) = Grid(n, (2π, 2π, 1.0))
+Grid(n::Integer, l::NTuple{3,Real}) = Grid((n, n, n), l)
+Grid(n::NTuple{3,Integer}, l::NTuple{3,Real}) =
+        Grid(map(ni -> convert(Int, ni), n), map(li -> convert(Float64, li), l))
+
 include("mpi.jl")
 include("advection.jl")
 include("pressure_solver.jl")
@@ -11,16 +27,16 @@ include("pressure_solver.jl")
 # wavenumbers in fft order, with zero for nyquist frequency
 wavenumbers(n) = map(i -> i<n/2 ? i : i>n/2 ? i-n : 0 , 0:n-1)
 
-function prepare_state(T::Type{<:Real}, grid)
+function prepare_state(gd::Grid{T}) where T
 
     # shorthand to initialize arrays
-    init_field_pd() = zeros(T, grid.nx, grid.ny, grid.nz)
-    init_field_fd() = zeros(Complex{T}, div(grid.nx,2)+1, grid.ny, grid.nz)
+    init_field_pd() = zeros(T, gd.n...)
+    init_field_fd() = zeros(Complex{T}, div(gd.n[1],2)+1, gd.n[2:3]...)
 
     # shorthand to initialize enlarged arrays for dealiasing
-    nx_big, ny_big = (3*div(grid.nx,2), 3*div(grid.nx,2))
-    init_field_big_pd() = zeros(T, nx_big, ny_big, grid.nz)
-    init_field_big_fd() = zeros(Complex{T}, div(nx_big,2)+1, ny_big, grid.nz)
+    n_big = (3*div(gd.n[1],2), 3*div(gd.n[2],2), gd.n[3])
+    init_field_big_pd() = zeros(T, n_big)
+    init_field_big_fd() = zeros(Complex{T}, div(n_big[1],2)+1, n_big[2:3]...)
 
     state_pd = (u = init_field_pd(), u_big = init_field_big_pd(),
                 v = init_field_pd(), v_big = init_field_big_pd(),
@@ -37,31 +53,31 @@ function prepare_state(T::Type{<:Real}, grid)
                 p_hat = init_field_fd())
 
     # wavenumbers
-    kx = wavenumbers(grid.nx)[1:div(grid.nx,2)+1]
-    ky = wavenumbers(grid.ny)
+    kx = wavenumbers(gd.n[1])[1:div(gd.n[1],2)+1]
+    ky = wavenumbers(gd.n[2])
 
     transform = (
         plan_fwd     = plan_rfft(state_pd.u, (1,2)),
-        plan_bwd     = plan_brfft(state_fd.u_hat, grid.nx, (1,2)),
+        plan_bwd     = plan_brfft(state_fd.u_hat, gd.n[1], (1,2)),
         plan_fwd_big = plan_rfft(state_pd.u_big, (1,2)),
-        plan_bwd_big = plan_brfft(state_fd.u_big_hat, nx_big, (1,2)),
+        plan_bwd_big = plan_brfft(state_fd.u_big_hat, n_big[1], (1,2)),
         buffer=init_field_fd(),
         buffer_pd=init_field_pd(),
         buffer_big_pd=init_field_big_pd(),
         buffer_big_fd=init_field_big_fd(),
-        dx  = Complex{T}[1im * 2*π/grid.lx * k for k=kx],
-        dy  = Complex{T}[1im * 2*π/grid.ly * k for k=ky],
-        dx_premultiplied = Complex{T}[1im * 2*π/grid.lx * k / (grid.nx*grid.ny) for k=kx],
-        dy_premultiplied = Complex{T}[1im * 2*π/grid.ly * k / (grid.nx*grid.ny) for k=ky],
-        dx2 = T[1/(grid.nx*grid.ny) * (-4*π*π)/(grid.lx*grid.lx) * k * k
-                for k=wavenumbers(grid.nx)[1:div(grid.nx,2)+1]],
-        dy2 = T[1/(grid.nx*grid.ny) * (-4*π*π)/(grid.ly*grid.ly) * k * k
-                for k=wavenumbers(grid.ny)],
-        dd2 = [prepare_laplacian(T, grid, kx, ky) for kx=kx, ky=ky],
-        duvdz = (uvp=true, dirichlet=true, dz=convert(T, grid.lz/grid.nz),
-            ghost=zeros(T, grid.nx, grid.ny)),
-        dpdz = (uvp=true, dirichlet=false, dz=convert(T, grid.lz/grid.nz),
-            ghost=zeros(T, grid.nx, grid.ny)),
+        dx  = Complex{T}[1im * 2*π/gd.l[1] * k for k=kx],
+        dy  = Complex{T}[1im * 2*π/gd.l[2] * k for k=ky],
+        dx_premultiplied = Complex{T}[1im * 2*π/gd.l[1] * k / (gd.n[1]*gd.n[2]) for k=kx],
+        dy_premultiplied = Complex{T}[1im * 2*π/gd.l[2] * k / (gd.n[1]*gd.n[2]) for k=ky],
+        dx2 = T[1/(gd.n[1]*gd.n[2]) * (-4*π*π)/(gd.l[1]*gd.l[1]) * k * k
+                for k=wavenumbers(gd.n[1])[1:div(gd.n[1],2)+1]],
+        dy2 = T[1/(gd.n[1]*gd.n[2]) * (-4*π*π)/(gd.l[2]*gd.l[2]) * k * k
+                for k=wavenumbers(gd.n[2])],
+        dd2 = [prepare_laplacian(gd, kx, ky) for kx=kx, ky=ky],
+        duvdz = (uvp=true, dirichlet=true, dz=convert(T, gd.l[3]/gd.n[3]),
+            ghost=zeros(T, gd.n[1], gd.n[2])),
+        dpdz = (uvp=true, dirichlet=false, dz=convert(T, gd.l[3]/gd.n[3]),
+            ghost=zeros(T, gd.n[1], gd.n[2])),
         )
 
     state_pd, state_fd, transform
@@ -167,11 +183,11 @@ function laplacian!(lvel, vel_hat, tr, uvp)
 end
 
 
-function prepare_gradients(T::Type{<:Real}, grid)
-    init_field() = zeros(T, grid.nx, grid.ny, grid.nz)
-    nx_big, ny_big = (3*div(grid.nx,2), 3*div(grid.nx,2))
-    init_field_big_pd() = zeros(T, nx_big, ny_big, grid.nz)
-    init_field_big_fd() = zeros(Complex{T}, div(nx_big,2)+1, ny_big, grid.nz)
+function prepare_gradients(gd::Grid{T}) where T
+    init_field() = zeros(T, gd.n)
+    n_big = (3*div(gd.n[1],2), 3*div(gd.n[2],2), gd.n[3])
+    init_field_big_pd() = zeros(T, n_big)
+    init_field_big_fd() = zeros(Complex{T}, div(n_big[1],2)+1, n_big[2:3]...)
     (
         dudy = init_field(), dudz = init_field(), lapu = init_field(),
         dvdz = init_field(), dvdx = init_field(), lapv = init_field(),
@@ -206,16 +222,15 @@ function update_velocity_gradients!(gradients, state_pd, state_fd, transform)
     gradients
 end
 
-function prepare_rhs(T::Type{<:Real}, grid)
-    nx_big = div(grid.nx,2)*3
-    ny_big = div(grid.ny,2)*3
+function prepare_rhs(gd::Grid{T}) where T
+    n_big = (div(gd.n[1],2)*3, div(gd.n[2],2)*3, gd.n[3])
     (
-        rhs_u = zeros(T, grid.nx, grid.ny, grid.nz),
-        rhs_v = zeros(T, grid.nx, grid.ny, grid.nz),
-        rhs_w = zeros(T, grid.nx, grid.ny, grid.nz),
-        ghost = zeros(T, grid.nx, grid.ny),
-        ghost_big = zeros(T, nx_big, ny_big),
-        div_fd = zeros(Complex{T}, div(grid.nx,2)+1, grid.ny, grid.nz)
+        rhs_u = zeros(T, gd.n[1], gd.n[2], gd.n[3]),
+        rhs_v = zeros(T, gd.n[1], gd.n[2], gd.n[3]),
+        rhs_w = zeros(T, gd.n[1], gd.n[2], gd.n[3]),
+        ghost = zeros(T, gd.n[1], gd.n[2]),
+        ghost_big = zeros(T, n_big[1:2]),
+        div_fd = zeros(Complex{T}, div(gd.n[1],2)+1, gd.n[2:3]...)
     )
 end
 
@@ -274,26 +289,23 @@ function euler_step!(state, rhs, dt)
     state
 end
 
-channelflow(grid, tspan, u0; kwargs...) = channelflow(Float64, grid, tspan, u0; kwargs...)
-
-function channelflow(T::Type{<:Real}, grid, tspan, u0; verbose = false)
+function channelflow(gd::Grid{T}, tspan, u0; verbose = false) where T
 
     ν = 1e-2 # kinematic viscosity, 1.5e-5 for air
 
     to = TimerOutput()
 
     @timeit to "allocations" begin
-        state_pd, state_fd, tf = prepare_state(T, grid)
-        gradients = prepare_gradients(T, grid)
-        rhs = prepare_rhs(T, grid)
+        state_pd, state_fd, tf = prepare_state(gd)
+        gradients = prepare_gradients(gd)
+        rhs = prepare_rhs(gd)
         forcing = (one(T), zero(T), zero(T))
     end
 
     # initialize velocity field
     @timeit to "initialization" begin
-        dx, dy, dz = grid.lx/grid.nx, grid.ly/grid.ny, grid.lz/grid.nz
         for i in CartesianIndices(state_pd.u)
-            state_pd.u[i] = u0((i[1]-1)*dx, i[2]-1*dy, i[3]-1*dz)
+            state_pd.u[i] = u0((i[1]-1)*gd.δ[1], i[2]-1*gd.δ[2], i[3]-1*gd.δ[3])
         end
     end
 

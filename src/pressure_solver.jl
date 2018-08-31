@@ -31,14 +31,14 @@ function LinearAlgebra.ldiv!(A::SymThomas, B) # A \ B
 end
 
 # matrices for laplacian in Fourier space, for each kx & ky
-function prepare_laplacian(T, grid, kx, ky)
+function prepare_laplacian(gd::Grid{T}, kx, ky) where T
 
-    dz = grid.lz / grid.nz
+    dz = gd.l[3] / gd.n[3]
 
-    dx2 = - (kx * 2*π/grid.lx).^2
-    dy2 = - (ky * 2*π/grid.ly).^2
-    dz2_diag0 = - [one(T); 2*ones(T, grid.nz-2); one(T)] / dz^2
-    dz2_diag1 = ones(T, grid.nz-1) / dz^2
+    dx2 = - (kx * 2*π/gd.l[1]).^2
+    dy2 = - (ky * 2*π/gd.l[2]).^2
+    dz2_diag0 = - [one(T); 2*ones(T, gd.n[3]-2); one(T)] / dz^2
+    dz2_diag1 = ones(T, gd.n[3]-1) / dz^2
 
     L = LinearAlgebra.SymTridiagonal{T}(dz2_diag0 .+ dx2 .+ dy2, dz2_diag1)
 

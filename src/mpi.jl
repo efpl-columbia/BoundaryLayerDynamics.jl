@@ -345,26 +345,23 @@ function update_rhs_mpi!(rhs, state_pd, state_fd, gradients, transform, forcing,
     rhs
 end
 
-channelflow_mpi(grid, tspan, u0; kwargs...) = channelflow_mpi(Float64, grid, tspan, u0; kwargs...)
-
-function channelflow_mpi(T::Type{<:Real}, grid, tspan, u0; verbose = false)
+function channelflow_mpi(gd::Grid{T}, tspan, u0; verbose = false) where T
 
     ν = 1e-2 # kinematic viscosity, 1.5e-5 for air
 
     to = TimerOutput()
 
     @timeit to "allocations" begin
-        state_pd, state_fd, tf = mpi_wrap_state(prepare_state(T, grid)...)
-        gradients = mpi_wrap_gradients(prepare_gradients(T, grid))
-        rhs = mpi_wrap_rhs(prepare_rhs(T, grid))
+        state_pd, state_fd, tf = mpi_wrap_state(prepare_state(gd)...)
+        gradients = mpi_wrap_gradients(prepare_gradients(gd))
+        rhs = mpi_wrap_rhs(prepare_rhs(gd))
         forcing = (one(T), zero(T), zero(T))
     end
 
     # initialize velocity field
     @timeit to "initialization" begin
-        dx, dy, dz = grid.lx/grid.nx, grid.ly/grid.ny, grid.lz/grid.nz
         for i in CartesianIndices(state_pd.u)
-            state_pd.u[i] = u0((i[1]-1)*dx, i[2]-1*dy, i[3]-1*dz)
+            state_pd.u[i] = u0((i[1]-1)*gd.δ[1], i[2]-1*gd.δ[2], i[3]-1*gd.δ[3])
         end
     end
 

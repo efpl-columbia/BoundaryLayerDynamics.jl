@@ -9,7 +9,7 @@ println("Testing ChannelFlow.jl...")
     function test_dx(N=64)
         u = zeros(N,N,N)
         dudx = similar(u)
-        gd = (lx=1.0,ly=1.0,lz=1.0,nx=N,ny=N,nz=N)
+        gd = ChannelFlow.Grid((N,N,N), (1.0,1.0,1.0))
 
         f = Float64[sin(2*π*i/N)^2 for i=0:N-1]
         dfdx = Float64[4*π*sin(2*π*i/N)*cos(2*π*i/N) for i=0:N-1]
@@ -17,7 +17,7 @@ println("Testing ChannelFlow.jl...")
             u[:,j,k] = f[:]
         end
 
-        tf = ChannelFlow.prepare_state(Float64, gd)[3]
+        tf = ChannelFlow.prepare_state(gd)[3]
         u_hat = similar(tf.buffer)
         LinearAlgebra.mul!(u_hat, tf.plan_fwd, u)
         ChannelFlow.ddx!(dudx, u_hat, tf)
@@ -28,7 +28,7 @@ println("Testing ChannelFlow.jl...")
     function test_dy(N=64)
         u = zeros(N,N,N)
         dudy = similar(u)
-        gd = (lx=1.0,ly=1.0,lz=1.0,nx=N,ny=N,nz=N)
+        gd = ChannelFlow.Grid((N,N,N), (1.0,1.0,1.0))
 
         f = Float64[sin(2*π*i/N)^2 for i=0:N-1]
         dfdy = Float64[4*π*sin(2*π*i/N)*cos(2*π*i/N) for i=0:N-1]
@@ -36,7 +36,7 @@ println("Testing ChannelFlow.jl...")
             u[i,j,k] = f[j]
         end
 
-        tf = ChannelFlow.prepare_state(Float64, gd)[3]
+        tf = ChannelFlow.prepare_state(gd)[3]
         u_hat = similar(tf.buffer)
         LinearAlgebra.mul!(u_hat, tf.plan_fwd, u)
         ChannelFlow.ddy!(dudy, u_hat, tf)
@@ -84,7 +84,7 @@ end
     MPI.Init()
     (MPI.Comm_size(MPI.COMM_WORLD) > 1 ? ChannelFlow.channelflow_mpi :
         ChannelFlow.channelflow)(
-            (lx=2π, ly=2π, lz=1, nx=64, ny=64, nz=64),
+            ChannelFlow.Grid((64, 64, 64), (2π, 2π, 1)),
             (dt=1e-3, nt=3),
             (x,y,z) -> 0.0,#1.0 + sin(z),
         )
