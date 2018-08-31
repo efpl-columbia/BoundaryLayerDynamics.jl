@@ -9,15 +9,33 @@ struct BigTransform{T<:SupportedReals}
     n::Tuple{Int,Int,Int}
     plan_fwd::FFTW.rFFTWPlan{T,FFTW.FORWARD,false,3}
     plan_bwd::FFTW.rFFTWPlan{Complex{T},FFTW.BACKWARD,false,3}
-    buffer_pd::Array{T,3}
-    buffer_fd::Array{Complex{T},3}
+    buffers_pd::NTuple{9,Array{T,3}}
+    buffers_fd::NTuple{1,Array{Complex{T},3}}
+    buffer_layers_pd::NTuple{5,Array{T,2}}
     function BigTransform(gd::Grid{T}) where T
         n = (3*div(gd.n[1],2), 3*div(gd.n[2],2), gd.n[3])
-        buffer_pd = zeros(T, n)
-        buffer_fd = zeros(Complex{T}, div(n[1],2)+1, n[2], n[3])
-        new{T}(n, plan_rfft(buffer_pd, (1,2)), plan_brfft(buffer_fd, n[1], (1,2)),
-            buffer_pd, buffer_fd)
+        buffers_pd = Tuple(zeros(T, n) for i=1:9)
+        buffers_fd = Tuple(zeros(Complex{T}, div(n[1],2)+1, n[2], n[3]) for i=1:1)
+        new{T}(n, plan_rfft(buffers_pd[1], (1,2)), plan_brfft(buffers_fd[1], n[1], (1,2)),
+            buffers_pd, buffers_fd, Tuple(zeros(T, n[1], n[2]) for i=1:5))
     end
+end
+
+struct DerivativeFactors{T<:SupportedReals}
+    dx1::Array{Complex{T},3}
+    dy1::Array{Complex{T},3}
+    dz1::T
+    dx2::Array{T,3}
+    dy2::Array{T,3}
+    dz2::T
+    DerivativeFactors(gd::Grid{T}) where T = new{T}(
+            reshape(1im * gd.k[1] * (2π/gd.l[1]), length(gd.k[1]), 1, 1),
+            reshape(1im * gd.k[2] * (2π/gd.l[2]), 1, length(gd.k[2]), 1),
+            1/gd.δ[3],
+            reshape( - gd.k[1].^2 * (2π/gd.l[1])^2, length(gd.k[1]), 1, 1),
+            reshape( - gd.k[2].^2 * (2π/gd.l[2])^2, 1, length(gd.k[2]), 1),
+            1/gd.δ[3]^2,
+    )
 end
 
 """
@@ -34,22 +52,31 @@ the RHS, and the pressure solver, as well as the time stepping.
 """
 struct ChannelFlowProblem{T<:SupportedReals}
 
+    # problem definition
     grid::Grid{T}
-    vel_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
-    p_hat::OffsetArray{Complex{T},3,Array{Complex{T},3}}
-    rhs_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
     lower_bc::NTuple{3,BoundaryCondition{T}}
     upper_bc::NTuple{3,BoundaryCondition{T}}
     forcing::NTuple{3,T}
-    big_tf::BigTransform{T}
 
+    # state
+    vel_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
+    p_hat::OffsetArray{Complex{T},3,Array{Complex{T},3}}
+
+    # buffered values
+    rhs_hat::NTuple{3,Array{Complex{T},3}}
+    rot_hat::NTuple{3,Array{Complex{T},3}}
+    tf_big::BigTransform{T}
+    df::DerivativeFactors{T}
+
+    # inner constructor
     ChannelFlowProblem(grid::Grid{T}, lower_bc::NTuple{3,BoundaryCondition{T}},
             upper_bc::NTuple{3,BoundaryCondition{T}}, forcing::NTuple{3,T},
-            ) where T = new{T}(grid,
-            map(i -> make_array_fd(grid), (1,2,3)), # vel_hat
-            make_array_fd(grid), # phat
-            map(i -> make_array_fd(grid), (1,2,3)), # rhs_hat
-            lower_bc, upper_bc, forcing, BigTransform(grid),
+            ) where T = new{T}(grid, lower_bc, upper_bc, forcing,
+            Tuple(make_buffered_array_fd(grid) for i=1:3), # vel_hat
+            make_buffered_array_fd(grid), # phat
+            Tuple(make_array_fd(grid) for i=1:3), # rhs_hat
+            Tuple(make_array_fd(grid) for i=1:3), # rot_hat
+            BigTransform(grid), DerivativeFactors(grid),
         )
 end
 
@@ -67,10 +94,7 @@ initialize!(cf::ChannelFlowProblem{T}, u0) where T =
 initialize!(cf::ChannelFlowProblem{T}, u0, v0) where T =
     initialize!(cf, u0, v0, (x,y,z) -> zero(T))
 
-# nodes are centered in horizontal direction, centered in vertical for uvp-nodes
-# TODO: decide whether nodes should be centered or start at x=0 and y=0
-# - advantages centered: more like finite volume cells, no asymmetry left/right
-# - advantages zero: works for different grid spacing (origin is the same)
+# nodes generally start at zero, vertically direction is centered for uvp-nodes
 @inline coord(i, δ, ::Val{:uvp}) = (δ[1] * (i[1]-1),
                                     δ[2] * (i[2]-1),
                                     δ[3] * (2*i[3]-1)/2)
@@ -79,41 +103,36 @@ initialize!(cf::ChannelFlowProblem{T}, u0, v0) where T =
                                     δ[3] * (i[3]-1))
 
 function initialize!(cf::ChannelFlowProblem, u0, v0, w0)
-    δ_big = cf.grid.l ./ cf.big_tf.n
+    δ_big = cf.grid.l ./ cf.tf_big.n
     for (vel_hat, vel_0, nodes) in zip(cf.vel_hat, (u0, v0, w0), (Val(:uvp), Val(:uvp), Val(:w)))
-        initialize!(vel_hat, vel_0, δ_big, nodes, cf.big_tf.plan_fwd,
-                cf.big_tf.buffer_pd, cf.big_tf.buffer_fd)
+        initialize!(vel_hat, vel_0, δ_big, nodes, cf.tf_big.plan_fwd,
+                cf.tf_big.buffers_pd[1], cf.tf_big.buffers_fd[1])
     end
-
     apply_bcs!(cf)
 end
 
 function initialize!(vel_hat, vel_0, δ_big, nodes, plan_big_fwd, buffer_big_pd, buffer_big_fd)
-    fill!(vel_hat, zero(eltype(vel_hat)))
     for i in CartesianIndices(buffer_big_pd)
         buffer_big_pd[i] = vel_0(coord(i, δ_big, nodes)...)
     end
-    add_fft_dealiased!(vel_hat, buffer_big_pd, plan_big_fwd, buffer_big_fd)
+    fft_dealiased!(vel_hat, buffer_big_pd, plan_big_fwd, buffer_big_fd)
 end
 
-struct DerivativeFactors{T<:SupportedReals}
-    dx2::Array{T,1}
-    dy2::Array{T,1}
-    dz2::T
-    DerivativeFactors(gd::Grid{T}) where T = new{T}(
-            - gd.k[1].^2 * (2π/gd.l[1])^2,
-            - gd.k[2].^2 * (2π/gd.l[2])^2,
-            1/gd.δ[3]^2,
-    )
+function build_rhs!(cf)
+    set_advection_fd!(cf.rhs_hat, cf.vel_hat, cf.rot_hat, cf.df, cf.tf_big)
+    add_laplacian_fd!(cf.rhs_hat, cf.vel_hat, cf.df)
 end
 
+make_array_fd(gd::Grid{T}) where T = Array(zeros(Complex{T},
+        div(gd.n[1],2)+1, gd.n[2], gd.n[3]))
 
-make_array_fd(gd::Grid{T}) where T = OffsetArray(zeros(Complex{T},
+make_buffered_array_fd(gd::Grid{T}) where T = OffsetArray(zeros(Complex{T},
         div(gd.n[1],2)+1, gd.n[2], gd.n[3]+2),
         1:div(gd.n[1],2)+1, 1:gd.n[2], 0:gd.n[3]+1)
 
 @inline innerindices(A::OffsetArray) = CartesianIndices((1:size(A,1),
         1:size(A,2), 1:size(A,3)-2))
+@inline innerindices(A::Array) = CartesianIndices(A)
 
 # uniform Dirichlet boundary conditions for u- and v-velocities
 function set_lower_bc!(vel_hat, bc::DirichletBC) # (u[0] + u[1]) / 2 = value
@@ -169,6 +188,31 @@ function add_laplacian_fd!(rhs_hat, vel_hat, df::DerivativeFactors)
     end
 end
 
+function add_laplacian_fd!(rhs_hat::Tuple, vel_hat::Tuple, df::DerivativeFactors)
+    for (rh, vh) in zip(rhs_hat, vel_hat)
+        add_laplacian_fd!(rh, vh, df)
+    end
+end
+
+# compute one layer of vorticity (in frequency domain)
+# (dw/dy - dv/dz) and (du/dz - dw/dx) on w-nodes, (dv/dx - du/dy) on uvp-nodes
+@inline rot_u!(rot_u, v¯, v⁺, w, dy, dz) = @. rot_u = w * dy - (v⁺ - v¯) * dz
+@inline rot_v!(rot_v, u¯, u⁺, w, dx, dz) = @. rot_v = (u⁺ - u¯) * dz - w * dx
+@inline rot_w!(rot_w, u, v, dx, dy)      = @. rot_w = v * dx - u * dy
+
+function compute_vorticity_fd!(rot_hat, vel_hat, dx, dy, dz)
+    for k=1:size(vel_hat[1],3)-2 # inner z-layers
+        @views rot_u!(rot_hat[1][:,:,k],
+                      vel_hat[2][:,:,k-1], vel_hat[2][:,:,k], vel_hat[3][:,:,k],
+                      dy[:,:,1], dz)
+        @views rot_v!(rot_hat[2][:,:,k],
+                      vel_hat[1][:,:,k-1], vel_hat[1][:,:,k], vel_hat[3][:,:,k],
+                      dy[:,:,1], dz)
+        @views rot_w!(rot_hat[3][:,:,k], vel_hat[1][:,:,k], vel_hat[2][:,:,k],
+                      dx[:,:,1], dy[:,:,1])
+    end
+end
+
 """
 Transform a field from the frequency domain to an extended set of nodes in the
 physical domain by adding extra frequencies set to zero.
@@ -185,7 +229,7 @@ function ifft_dealiased!(field_big, field_hat, plan_big_bwd, buffer_big_fd)
     # -> which nx & ny? should be small values to get correct velocities in
     # physical domain, but needs to be big one to get correct frequencies again
     # when going back to the frequency domain
-    for i in innerindices(buffer_big_fd)
+    for i in CartesianIndices(buffer_big_fd)
         if 1+kx_max < i[1] || 1+ky_max < i[2] <= ny_big - ky_max
             buffer_big_fd[i] = 0
         else
@@ -200,10 +244,9 @@ end
 
 """
 Transform a field from an extended set of nodes in physical domain back to the
-frequency domain and remove extra frequencies. The result is added to the output
-array rather than replacing the values.
+frequency domain and remove extra frequencies.
 """
-function add_fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
+function fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
 
     LinearAlgebra.mul!(buffer_big_fd, plan_big_fwd, field_big)
 
@@ -222,7 +265,7 @@ function add_fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
         if i[1] == ky_max+2 || i[2] == ky_max+2
             field_hat[i] += 0
         else
-            field_hat[i] += i[2] <= 1+ky_max ? buffer_big_fd[i] * fft_factor :
+            field_hat[i] = i[2] <= 1+ky_max ? buffer_big_fd[i] * fft_factor :
                 buffer_big_fd[i[1], i[2] + (ny_big - ny), i[3]] * fft_factor
         end
     end
@@ -244,7 +287,7 @@ end
 function compute_advection_pd!(adv, rot, vel, buffers)
 
     # TODO: decide whether vel_big should contain buffer space & adapt accordingly
-    iz_min, iz_max = (1, size(vel_big[1],3)-2) # inner layers
+    iz_min, iz_max = (1, size(vel[1],3)) # inner layers
 
     u_below, v_below, w_above, rotx_above, roty_above = buffers[1:5]
     # TODO: exchange information on boundaries (plus BCs)
@@ -262,43 +305,50 @@ function compute_advection_pd!(adv, rot, vel, buffers)
         @views adv_v!(adv[2][:,:,k],
                       vel[1][:,:,k], rot[1][:,:,k], rot[1][:,:,k+1],
                       vel[3][:,:,k], vel[3][:,:,k+1], rot[3][:,:,k])
-        @views adv_z!(adv[3][:,:,k+1],
+        @views adv_w!(adv[3][:,:,k+1],
                       vel[1][:,:,k], vel[1][:,:,k+1], rot[1][:,:,k+1],
                       vel[2][:,:,k], vel[2][:,:,k+1], rot[2][:,:,k+1])
     end
 
     # add last layer, using the values above & below as exchanged earlier
-    @views adv_u!(adv[1][:,:,k],
-                  vel[2][:,:,k], rot[2][:,:,k], roty_above,
-                  vel[3][:,:,k], w_above, rot[3][:,:,k])
-    @views adv_v!(adv[2][:,:,k],
-                  vel[1][:,:,k], rot[1][:,:,k], rotx_above,
-                  vel[3][:,:,k], w_above, rot[3][:,:,k])
-    @views adv_z!(adv[3][:,:,k],
-                  u_below, vel[1][:,:,k], rot[1][:,:,k],
-                  v_below, vel[2][:,:,k], rot[2][:,:,k])
+    @views adv_u!(adv[1][:,:,iz_max],
+                  vel[2][:,:,iz_max], rot[2][:,:,iz_max], roty_above,
+                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
+    @views adv_v!(adv[2][:,:,iz_max],
+                  vel[1][:,:,iz_max], rot[1][:,:,iz_max], rotx_above,
+                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
+    @views adv_w!(adv[3][:,:,iz_min],
+                  u_below, vel[1][:,:,iz_min], rot[1][:,:,iz_min],
+                  v_below, vel[2][:,:,iz_min], rot[2][:,:,iz_min])
 
     adv
 end
 
-function add_advection_fd!(rhs_hat, vel_hat, df)
+function set_advection_fd!(rhs_hat, vel_hat, rot_hat, df, tf_big)
     # need: rot_hat[1:3], vel_big[1:3], rot_big[1:3], plan_big_{fwd,bwd},
     # buffer_big_fd, buffer_layers_pd[1:5]
 
     # compute vorticity in fourier domain
-    compute_vorticity_fd!(rot_hat, vel_hat, df)
+    compute_vorticity_fd!(rot_hat, vel_hat, df.dx1, df.dy1, df.dz1)
+
+    rot_big = tf_big.buffers_pd[1:3]
+    vel_big = tf_big.buffers_pd[4:6]
+    adv_big = tf_big.buffers_pd[7:9]
 
     # for each velocity and vorticity, pad the frequencies and transform
     # to physical space (TODO: fix boundaries)
-    broadcast(ifft_dealiased!, rot_big, rot_hat, plan_big_bwd, buffer_big_fd)
-    broadcast(ifft_dealiased!, vel_big, vel_hat, plan_big_bwd, buffer_big_fd)
+    for (field_big, field_hat) in zip((rot_big..., vel_big...), (rot_hat..., vel_hat...))
+        ifft_dealiased!(field_big, field_hat, tf_big.plan_bwd, tf_big.buffers_fd[1])
+    end
 
     # compute the advection term in physical domain
-    compute_advection_pd!(adv_big, rot_big, vel_big, buffer_layers_pd)
+    compute_advection_pd!(adv_big, rot_big, vel_big, tf_big.buffer_layers_pd[1:5])
 
-    # transform advection term back to frequency domain and add to the
-    # RHS, skipping higher frequencies for dealiasing
-    broadcast!(add_fft_dealiased!, rhs_hat, adv_big, plan_big_fwd, buffer_big_fd)
+    # transform advection term back to frequency domain and set RHS to result,
+    # skipping higher frequencies for dealiasing
+    for (field_hat, field_big) in zip(rhs_hat, adv_big)
+        fft_dealiased!(field_hat, field_big, tf_big.plan_fwd, tf_big.buffers_fd[1])
+    end
 
     rhs_hat
 end

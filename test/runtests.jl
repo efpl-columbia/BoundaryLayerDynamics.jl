@@ -30,6 +30,8 @@ function test_basics()
     @test all(p.vel_hat[1][2,1,1:end-1] .≈ 0.5)
     @test p.vel_hat[1][2,1,0] ≈ -0.5
     @test p.vel_hat[1][2,1,end] ≈ -0.5
+
+    CF.build_rhs!(p)
 end
 
 @testset "Basics" begin
