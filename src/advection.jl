@@ -1,165 +1,160 @@
-function add_advection!(rhs, state_pd, gradients)
+# compute one layer of vorticity (in frequency domain)
+# (dw/dy - dv/dz) and (du/dz - dw/dx) on w-nodes, (dv/dx - du/dy) on uvp-nodes
+@inline rot_u!(rot_u, v¯, v⁺, w, dy, dz) = @. rot_u = w * dy - (v⁺ - v¯) * dz
+@inline rot_v!(rot_v, u¯, u⁺, w, dx, dz) = @. rot_v = (u⁺ - u¯) * dz - w * dx
+@inline rot_w!(rot_w, u, v, dx, dy)      = @. rot_w = v * dx - u * dy
 
-    #=
-    for now, there is no dealiasing and the products are computed directly
-    on the regular nodes in physical space. to keep the spectral accuracy,
-    the products should be computed with 3/2 of the frequencies, i.e. on
-    1.5 times as many nodes in physical space. this will be done as follows:
-    - compute dudy, dudz, dvdz, dvdx, dwdx, dwdy
-    - expand velocities to 3/2 of nodes
-    - expand curl terms (dwdy-dvdz), (dudz-dwdx), (dvdx-dudy) to 3/2 of nodes
-    - compute product and reduce to regular nodes again
-    =#
-
-    nz = size(rhs.rhs_u,3)
-    fill!(rhs.ghost, zero(eltype(rhs.ghost)))
-
-    # -(roty[w]*w[w]-rotz[uvp]*v[uvp]) (interpolate w up to uvp)
-    # ghost layer is roty*w at w=top (== zero)
-    for i in CartesianIndices(rhs.rhs_u)
-        rhs.rhs_u[i] -= (
-            0.5 * (gradients.roty[i] * state_pd.w[i] + ((i[3] == nz) ? rhs.ghost[i[1], i[2]] :
-            gradients.roty[i[1], i[2], i[3]+1] * state_pd.w[i[1], i[2], i[3]+1]))
-            + gradients.rotz[i] * state_pd.v[i])
+@inline function compute_vorticity_fd!(rot_hat, vel_hat, dx, dy, dz)
+    for k=1:size(vel_hat[1],3)-2 # inner z-layers
+        @views rot_u!(rot_hat[1][:,:,k],
+                      vel_hat[2][:,:,k-1], vel_hat[2][:,:,k], vel_hat[3][:,:,k],
+                      dy[:,:,1], dz)
+        @views rot_v!(rot_hat[2][:,:,k],
+                      vel_hat[1][:,:,k-1], vel_hat[1][:,:,k], vel_hat[3][:,:,k],
+                      dy[:,:,1], dz)
+        @views rot_w!(rot_hat[3][:,:,k], vel_hat[1][:,:,k], vel_hat[2][:,:,k],
+                      dx[:,:,1], dy[:,:,1])
     end
-
-    # -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) (interpolate w up to uvp)
-    # ghost layer is rotx*w at w=top (== zero)
-    for i in CartesianIndices(rhs.rhs_v)
-        rhs.rhs_v[i] -= (
-            gradients.rotz[i] * state_pd.u[i]
-            - 0.5 * (gradients.rotx[i] * state_pd.w[i] + ((i[3] == nz) ? rhs.ghost[i[1], i[2]] :
-            gradients.rotx[i[1], i[2], i[3]+1] * state_pd.w[i[1], i[2], i[3]+1]))
-            )
-    end
-
-    # -(rotx[w]*v[uvp]-roty[w]*u[uvp]) (interpolate uvp down to w)
-    # ghost layer is rotx*v-roty*u at w=bottom (== zero)
-    for i in CartesianIndices(rhs.rhs_v)
-        rhs.rhs_w[i] -= (i[3] == 1) ? rhs.ghost[i[1], i[2]] :
-            ( gradients.rotx[i] * 0.5 * (state_pd.v[i] + state_pd.v[i[1], i[2], i[3]-1])
-            - gradients.roty[i] * 0.5 * (state_pd.u[i] + state_pd.u[i[1], i[2], i[3]-1]) )
-    end
-
-    rhs
 end
 
-function pad_frequencies!(vel_big_hat, vel_hat)
-    # warning: this assumes that nx & ny (before the fft)
-    #          are even in the non-expanded array
+"""
+Transform a field from the frequency domain to an extended set of nodes in the
+physical domain by adding extra frequencies set to zero.
+"""
+function ifft_dealiased!(field_big, field_hat, plan_big_bwd, buffer_big_fd)
 
     # highest frequencies (excluding nyquist) in non-expanded array
-    ny, ny_big = size(vel_hat,2), size(vel_big_hat,2)
-    kx_max = size(vel_hat,1) - 2 # [0, 1…kmax, nyquist]
+    ny, ny_big = size(field_hat,2), size(buffer_big_fd,2)
+    kx_max = size(field_hat,1) - 2 # [0, 1…kmax, nyquist]
     ky_max = div(ny,2) - 1 # [0, 1…kmax, nyquist, -kmax…1]
 
-    for i in CartesianIndices(vel_big_hat)
+    # copy frequencies such that the extra frequencies are zero
+    # TODO: multiply with 1/(nx*ny) -> which nx & ny?
+    # -> which nx & ny? should be small values to get correct velocities in
+    # physical domain, but needs to be big one to get correct frequencies again
+    # when going back to the frequency domain
+    for i in CartesianIndices(buffer_big_fd)
         if 1+kx_max < i[1] || 1+ky_max < i[2] <= ny_big - ky_max
-            vel_big_hat[i] = 0
+            buffer_big_fd[i] = 0
         else
-            vel_big_hat[i] = i[2] <= 1+ky_max ? vel_hat[i] :
-                vel_hat[i[1], i[2] - (ny_big - ny), i[3]]
+            buffer_big_fd[i] = i[2] <= 1+ky_max ? field_hat[i] :
+                field_hat[i[1], i[2] - (ny_big - ny), i[3]]
         end
     end
-    vel_big_hat
+
+    LinearAlgebra.mul!(field_big, plan_big_bwd, buffer_big_fd)
+    field_big
 end
 
-function unpad_frequencies!(vel_hat, vel_big_hat)
-    # warning: this assumes that nx & ny (before the fft)
-    #          are even in the non-expanded array
+"""
+Transform a field from an extended set of nodes in physical domain back to the
+frequency domain and remove extra frequencies.
+"""
+function fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
+
+    LinearAlgebra.mul!(buffer_big_fd, plan_big_fwd, field_big)
 
     # highest frequencies (excluding nyquist) in non-expanded array
-    ny, ny_big = size(vel_hat,2), size(vel_big_hat,2)
-    kx_max = size(vel_hat,1) - 2 # [0, 1…kmax, nyquist]
+    # warning: this assumes that nx & ny (before the fft)
+    #          are even in the non-expanded array
+    ny, ny_big = size(field_hat,2), size(buffer_big_fd,2)
+    kx_max = size(field_hat,1) - 2 # [0, 1…kmax, nyquist]
     ky_max = div(ny,2) - 1 # [0, 1…kmax, nyquist, -kmax…1]
 
-    for i in CartesianIndices(vel_hat)
+    # fft normalization factor 1/(nx*ny) is applied whenever forward transform
+    # is performed
+    fft_factor = 1 / (size(field_big,1) * size(field_big,2))
+
+    for i in innerindices(field_hat)
         if i[1] == ky_max+2 || i[2] == ky_max+2
-            vel_hat[i] = 0
+            field_hat[i] += 0
         else
-            vel_hat[i] = i[2] <= 1+ky_max ? vel_big_hat[i] :
-                vel_big_hat[i[1], i[2] + (ny_big - ny), i[3]]
+            field_hat[i] = i[2] <= 1+ky_max ? buffer_big_fd[i] * fft_factor :
+                buffer_big_fd[i[1], i[2] + (ny_big - ny), i[3]] * fft_factor
         end
     end
-    vel_hat
+    field_hat
 end
 
-function add_advection_dealiased!(rhs, state_pd, state_fd, gradients, tf)
+# compute one layer of -(roty[w]*w[w]-rotz[uvp]*v[uvp]) on uvp-nodes
+@inline adv_u!(adv_u, v, roty¯, roty⁺, w¯, w⁺, rotz) =
+        @. adv_u = rotz * v - 0.5 * (roty¯ * w¯ + roty⁺ * w⁺)
 
-    #=
-    the products are computed with 3/2 of the frequencies, i.e. on
-    1.5 times as many nodes in physical space. this will be done as follows:
-    - compute dudy, dudz, dvdz, dvdx, dwdx, dwdy
-    - expand velocities to 3/2 of nodes
-    - expand curl terms (dwdy-dvdz), (dudz-dwdx), (dvdx-dudy) to 3/2 of nodes
-    - compute product and reduce to regular nodes again
-    =#
+# compute one layer of -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) on uvp-nodes
+@inline adv_v!(adv_v, u, rotx¯, rotx⁺, w¯, w⁺, rotz) =
+        @. adv_v = 0.5 * (rotx¯ * w¯ + rotx⁺ * w⁺) - rotz * u
 
-    # pad velocities
-    pad_frequencies!(state_fd.u_big_hat, state_fd.u_hat)
-    pad_frequencies!(state_fd.v_big_hat, state_fd.v_hat)
-    pad_frequencies!(state_fd.w_big_hat, state_fd.w_hat)
+# compute one layer of -(rotx[w]*v[uvp]-roty[w]*u[uvp]) on w-nodes
+@inline adv_w!(adv_w, u¯, u⁺, rotx, v¯, v⁺, roty) =
+        @. adv_w = roty * 0.5 * (u¯ + u⁺) - rotx * 0.5 * (v¯ + v⁺)
 
-    # pad vorticities (TODO: build vorticity directly in Fourier domain)
-    LinearAlgebra.mul!(tf.buffer, tf.plan_fwd, gradients.rotx)
-    pad_frequencies!(gradients.rotx_big_hat, tf.buffer)
-    LinearAlgebra.mul!(tf.buffer, tf.plan_fwd, gradients.roty)
-    pad_frequencies!(gradients.roty_big_hat, tf.buffer)
-    LinearAlgebra.mul!(tf.buffer, tf.plan_fwd, gradients.rotz)
-    pad_frequencies!(gradients.rotz_big_hat, tf.buffer)
+function compute_advection_pd!(adv, rot, vel, buffers)
 
-    # transform all six values to the physical domain
-    LinearAlgebra.mul!(state_pd.u_big, tf.plan_bwd_big, state_fd.u_big_hat)
-    LinearAlgebra.mul!(state_pd.v_big, tf.plan_bwd_big, state_fd.v_big_hat)
-    LinearAlgebra.mul!(state_pd.w_big, tf.plan_bwd_big, state_fd.w_big_hat)
-    LinearAlgebra.mul!(gradients.rotx_big, tf.plan_bwd_big, gradients.rotx_big_hat)
-    LinearAlgebra.mul!(gradients.roty_big, tf.plan_bwd_big, gradients.roty_big_hat)
-    LinearAlgebra.mul!(gradients.rotz_big, tf.plan_bwd_big, gradients.rotz_big_hat)
+    # TODO: decide whether vel_big should contain buffer space & adapt accordingly
+    iz_min, iz_max = (1, size(vel[1],3)) # inner layers
 
-    # compute advection term in physical domain, transform back to frequency domain,
-    # remove padding, transform to physical domain again, and add to RHS
+    u_below, v_below, w_above, rotx_above, roty_above = buffers[1:5]
+    # TODO: exchange information on boundaries (plus BCs)
 
-    nz = size(rhs.rhs_u,3)
-    fill!(rhs.ghost, zero(eltype(rhs.ghost)))
-
-    # -(roty[w]*w[w]-rotz[uvp]*v[uvp]) (interpolate w up to uvp)
-    # ghost layer is roty*w at w=top (== zero)
-    for i in CartesianIndices(tf.buffer_big_pd)
-        tf.buffer_big_pd[i] = (
-            0.5 * (gradients.roty_big[i] * state_pd.w_big[i] + ((i[3] == nz) ? rhs.ghost_big[i[1], i[2]] :
-            gradients.roty_big[i[1], i[2], i[3]+1] * state_pd.w_big[i[1], i[2], i[3]+1]))
-            + gradients.rotz_big[i] * state_pd.v_big[i])
+    # for the x- and y-advection, we need to interpolate rot[1]/rot[2] and vel[3]
+    # from w- up to uvp-nodes. we exclude the last layer as it needs data from
+    # the w-layer above
+    # for the z-advection, we need to interpolate vel[1] and vel[2] from
+    # uvp-nodes down to w-nodes. we exclude the first layer as it needs data from
+    # the uvp-layer below
+    for k=iz_min:iz_max-1
+        @views adv_u!(adv[1][:,:,k],
+                      vel[2][:,:,k], rot[2][:,:,k], rot[2][:,:,k+1],
+                      vel[3][:,:,k], vel[3][:,:,k+1], rot[3][:,:,k])
+        @views adv_v!(adv[2][:,:,k],
+                      vel[1][:,:,k], rot[1][:,:,k], rot[1][:,:,k+1],
+                      vel[3][:,:,k], vel[3][:,:,k+1], rot[3][:,:,k])
+        @views adv_w!(adv[3][:,:,k+1],
+                      vel[1][:,:,k], vel[1][:,:,k+1], rot[1][:,:,k+1],
+                      vel[2][:,:,k], vel[2][:,:,k+1], rot[2][:,:,k+1])
     end
-    LinearAlgebra.mul!(tf.buffer_big_fd, tf.plan_fwd_big, tf.buffer_big_pd)
-    unpad_frequencies!(tf.buffer, tf.buffer_big_fd)
-    LinearAlgebra.mul!(tf.buffer_pd, tf.plan_bwd, tf.buffer)
-    @. rhs.rhs_u -= tf.buffer_pd
 
-    # -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) (interpolate w up to uvp)
-    # ghost layer is rotx*w at w=top (== zero)
-    for i in CartesianIndices(tf.buffer_big_pd)
-        tf.buffer_big_pd[i] = (
-            gradients.rotz_big[i] * state_pd.u_big[i]
-            - 0.5 * (gradients.rotx_big[i] * state_pd.w_big[i] + ((i[3] == nz) ? rhs.ghost_big[i[1], i[2]] :
-            gradients.rotx_big[i[1], i[2], i[3]+1] * state_pd.w_big[i[1], i[2], i[3]+1]))
-            )
+    # add last layer, using the values above & below as exchanged earlier
+    @views adv_u!(adv[1][:,:,iz_max],
+                  vel[2][:,:,iz_max], rot[2][:,:,iz_max], roty_above,
+                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
+    @views adv_v!(adv[2][:,:,iz_max],
+                  vel[1][:,:,iz_max], rot[1][:,:,iz_max], rotx_above,
+                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
+    @views adv_w!(adv[3][:,:,iz_min],
+                  u_below, vel[1][:,:,iz_min], rot[1][:,:,iz_min],
+                  v_below, vel[2][:,:,iz_min], rot[2][:,:,iz_min])
+
+    adv
+end
+
+function set_advection_fd!(rhs_hat, vel_hat, rot_hat, df, tf_big, to)
+    # need: rot_hat[1:3], vel_big[1:3], rot_big[1:3], plan_big_{fwd,bwd},
+    # buffer_big_fd, buffer_layers_pd[1:5]
+
+    # compute vorticity in fourier domain
+    @timeit to "vorticity" compute_vorticity_fd!(rot_hat, vel_hat, df.dx1, df.dy1, df.dz1)
+
+    @timeit to "rename buffers" begin
+    rot_big = tf_big.buffers_pd[1:3]
+    vel_big = tf_big.buffers_pd[4:6]
+    adv_big = tf_big.buffers_pd[7:9]
     end
-    LinearAlgebra.mul!(tf.buffer_big_fd, tf.plan_fwd_big, tf.buffer_big_pd)
-    unpad_frequencies!(tf.buffer, tf.buffer_big_fd)
-    LinearAlgebra.mul!(tf.buffer_pd, tf.plan_bwd, tf.buffer)
-    @. rhs.rhs_v -= tf.buffer_pd
 
-    # -(rotx[w]*v[uvp]-roty[w]*u[uvp]) (interpolate uvp down to w)
-    # ghost layer is rotx*v-roty*u at w=bottom (== zero)
-    for i in CartesianIndices(tf.buffer_big_pd)
-        tf.buffer_big_pd[i] -= (i[3] == 1) ? rhs.ghost_big[i[1], i[2]] :
-            ( gradients.rotx_big[i] * 0.5 * (state_pd.v_big[i] + state_pd.v_big[i[1], i[2], i[3]-1])
-            - gradients.roty_big[i] * 0.5 * (state_pd.u_big[i] + state_pd.u_big[i[1], i[2], i[3]-1]) )
+    # for each velocity and vorticity, pad the frequencies and transform
+    # to physical space (TODO: fix boundaries)
+    @timeit to "fwd transforms" for (field_big, field_hat) in zip((rot_big..., vel_big...), (rot_hat..., vel_hat...))
+        ifft_dealiased!(field_big, field_hat, tf_big.plan_bwd, tf_big.buffers_fd[1])
     end
-    LinearAlgebra.mul!(tf.buffer_big_fd, tf.plan_fwd_big, tf.buffer_big_pd)
-    unpad_frequencies!(tf.buffer, tf.buffer_big_fd)
-    LinearAlgebra.mul!(tf.buffer_pd, tf.plan_bwd, tf.buffer)
-    @. rhs.rhs_w -= tf.buffer_pd
 
-    rhs
+    # compute the advection term in physical domain
+    @timeit to "non-linear part" compute_advection_pd!(adv_big, rot_big, vel_big, tf_big.buffer_layers_pd[1:5])
+
+    # transform advection term back to frequency domain and set RHS to result,
+    # skipping higher frequencies for dealiasing
+    @timeit to "bwd transform" for (field_hat, field_big) in zip(rhs_hat, adv_big)
+        fft_dealiased!(field_hat, field_big, tf_big.plan_fwd, tf_big.buffers_fd[1])
+    end
+
+    rhs_hat
 end
