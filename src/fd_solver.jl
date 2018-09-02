@@ -2,7 +2,7 @@ abstract type BoundaryCondition{T} end
 struct DirichletBC{T} <: BoundaryCondition{T} value::T end
 struct NeumannBC{T} <: BoundaryCondition{T}
     value::T # values has δz premultiplied
-    NeumannBC(value::T, δz::T) where T= new{T}(value * δz)
+    NeumannBC(value::T, δz::T) where T = new{T}(value * δz)
 end
 
 struct BigTransform{T<:SupportedReals}
@@ -12,7 +12,7 @@ struct BigTransform{T<:SupportedReals}
     buffers_pd::NTuple{9,Array{T,3}}
     buffers_fd::NTuple{1,Array{Complex{T},3}}
     buffer_layers_pd::NTuple{5,Array{T,2}}
-    function BigTransform(gd::Grid{T}) where T
+    BigTransform(gd::Grid{T}) where T = begin
         n = (3*div(gd.n[1],2), 3*div(gd.n[2],2), gd.n[3])
         buffers_pd = Tuple(zeros(T, n) for i=1:9)
         buffers_fd = Tuple(zeros(Complex{T}, div(n[1],2)+1, n[2], n[3]) for i=1:1)
@@ -39,6 +39,36 @@ struct DerivativeFactors{T<:SupportedReals}
 end
 
 """
+Structure holding the data to efficiently solve a series of symmetric
+tridiagonal linear systems. The input is an iterator that returns a series of
+symmetric tridiagonal matrices. For each matrix, the constructor prepares two
+arrays to apply the Thomas algorithm with a minimal amount of operations.
+
+The implementatioh of the Thomas algorithm closely follows the “modthomas”
+routine in section 3.7.2 in the 2nd ed. of the book “Numerical Mathematics” by
+Quarteroni, Sacco & Saleri, modified to take advantage of the symmetrical
+structure of the matrix.
+"""
+struct SymThomasBatch{T}
+    γ::Array{T,2}
+    β::Array{T,2}
+    SymThomasBatch{T}(As, nz) where T = begin
+        nk = length(As) # batch size
+        γ = zeros(T, nk, nz)
+        β = zeros(T, nk, nz-1)
+        for (ik,A::LinearAlgebra.SymTridiagonal{T,Array{T,1}}) in enumerate(As)
+            size(A) == (nz,nz) || error("Matrix size not compatible")
+            γ[ik,1] = 1 / A.dv[1]
+            for iz = 2:nz
+                γ[ik,iz] = 1 / (A.dv[iz] - A.ev[iz-1].^2 * γ[ik,iz-1])
+            end
+            β[ik,:] = copy(A.ev)
+        end
+        new{T}(γ, β)
+    end
+end
+
+"""
 This is a new attempt at how to best implement the channel flow DNS in Julia.
 This time, we compute everything in frequency domain, only going back to the
 physical domain when necessary. Currently, this is only the case for the
@@ -60,24 +90,170 @@ struct ChannelFlowProblem{T<:SupportedReals}
 
     # state
     vel_hat::NTuple{3,OffsetArray{Complex{T},3,Array{Complex{T},3}}}
-    p_hat::OffsetArray{Complex{T},3,Array{Complex{T},3}}
+    #p_hat::OffsetArray{Complex{T},3,Array{Complex{T},3}}
+    p_hat::Array{Complex{T},3}
 
     # buffered values
     rhs_hat::NTuple{3,Array{Complex{T},3}}
     rot_hat::NTuple{3,Array{Complex{T},3}}
     tf_big::BigTransform{T}
     df::DerivativeFactors{T}
+    p_solver::SymThomasBatch{T}
 
     # inner constructor
     ChannelFlowProblem(grid::Grid{T}, lower_bc::NTuple{3,BoundaryCondition{T}},
             upper_bc::NTuple{3,BoundaryCondition{T}}, forcing::NTuple{3,T},
             ) where T = new{T}(grid, lower_bc, upper_bc, forcing,
             Tuple(make_buffered_array_fd(grid) for i=1:3), # vel_hat
-            make_buffered_array_fd(grid), # phat
+            make_array_fd(grid), # phat
             Tuple(make_array_fd(grid) for i=1:3), # rhs_hat
             Tuple(make_array_fd(grid) for i=1:3), # rot_hat
             BigTransform(grid), DerivativeFactors(grid),
+            SymThomasBatch{T}((prepare_laplacian_fd(grid, kx, ky)
+                    for kx=grid.k[1], ky=grid.k[2]), grid.n[3]),
         )
+end
+
+@inline function checkbounds_symthomas_batch(B, γ, β)
+    k, n = size(B)
+    n > 0 && size(γ) == (k,n) && size(β) == (k,n-1) ||
+            error("Cannot apply forward pass: array sizes do not match")
+end
+
+"""
+This function applies the forward pass of the symmetric Thomas algorithm, where
+the operations are applied elementwise along the first dimension of the arrays
+such that several systems can be solved in one go.
+"""
+@inline function symthomas_batch_fwd!(B, γ, β)
+    @boundscheck checkbounds_symthomas_batch(B, γ, β)
+    @inbounds @. @views B[:,1] = γ[:,1] * B[:,1]
+    for i=2:size(B,2)
+        @inbounds @. @views B[:,i] = γ[:,i] * (B[:,i] - β[:,i-1] * B[:,i-1])
+    end
+end
+
+"""
+This function applies the backward pass of the symmetric Thomas algorithm, where
+the operations are applied elementwise along the first dimension of the arrays
+such that several systems can be solved in one go.
+"""
+@inline function symthomas_batch_bwd!(B, γ, β)
+    @boundscheck checkbounds_symthomas_batch(B, γ, β)
+    for i=size(B,2)-1:-1:1
+        @inbounds @. @views B[:,i] -= γ[:,i] * β[:,i] * B[:,i+1]
+    end
+end
+
+function LinearAlgebra.ldiv!(A::SymThomasBatch, B)
+    dims = size(B)
+    B = reshape(B, size(A.γ)) # treat all dimensions but last as a single one
+    checkbounds_symthomas_batch(B, A.γ, A.β) # could be ommited, reshape already confirms size
+    @inbounds symthomas_batch_fwd!(B, A.γ, A.β)
+    @inbounds symthomas_batch_bwd!(B, A.γ, A.β)
+    reshape(B, dims)
+end
+
+# matrices for laplacian in Fourier space, for each kx & ky
+function prepare_laplacian_fd(gd::Grid{T}, kx, ky) where T
+
+    dx2 = - (kx * 2*π/gd.l[1]).^2
+    dy2 = - (ky * 2*π/gd.l[2]).^2
+    dz2_diag0 = - [one(T); 2*ones(T, gd.n[3]-2); one(T)] / gd.δ[3]^2
+    dz2_diag1 = ones(T, gd.n[3]-1) / gd.δ[3]^2
+
+    # if kx=ky=0, the nz equations only have nz-1 that are linearly independent,
+    # so we drop the last line and use it to set the mean pressure at the top
+    # of the domain to (approximately) zero with (-3p[nz]+p[nz-1])/δz²=0
+    if kx == ky == 0
+        dz2_diag0[end] = -3 / gd.δ[3]^2
+    end
+
+    LinearAlgebra.SymTridiagonal{T}(dz2_diag0 .+ dx2 .+ dy2, dz2_diag1)
+end
+
+#=
+missing steps:
+- build matrices for solver
+- add pieces to RHS
+- compute divergence of RHS & solve for pressure
+- simple time stepping
+- compare speed
+- fix odd/even frequencies (drop Nyquist from the start)
+=#
+
+
+"""
+Compute the vertical derivative of a function, with the result being on a
+different set of nodes. The boundary versions assume that the derivative is
+computed in frequency domain.
+"""
+@inline dvel_dz!(dvel_dz, vel¯, vel⁺, dz) = @. dvel_dz = (vel⁺ - vel¯) * dz
+@inline dvel_dz!(dvel_dz, vel¯::DirichletBC, vel⁺, dz) =
+        (@. dvel_dz = vel⁺ * dz; dvel_dz[1,1] -= vel¯.value; dvel_dz)
+@inline dvel_dz!(dvel_dz, vel¯, vel⁺::DirichletBC, dz) =
+        (@. dvel_dz = - vel¯ * dz; dvel_dz[1,1] += vel⁺.value; dvel_dz)
+
+"""
+Compute the divergence of a field with three components in frequency domain.
+"""
+function compute_divergence_fd!(div_hat, field_hat, bc_w, dx, dy, dz)
+
+    # start with the vertical derivatives, overwriting existing values in div_hat
+    for k = 2:size(div_hat,3)-1
+        @views dvel_dz!(div_hat[:,:,k], field_hat[3][:,:,k], field_hat[3][:,:,k+1], dz)
+    end
+    @views dvel_dz!(div_hat[:,:,1], bc_w, field_hat[3][:,:,2], dz)
+    @views dvel_dz!(div_hat[:,:,end], field_hat[3][:,:,end], bc_w, dz)
+
+    # add horizontal derivatives
+    @. div_hat += field_hat[2] * dy
+    @. div_hat += field_hat[1] * dx
+
+    # for kx=ky=0, the top and bottom boundary condition have to be the same,
+    # which corresponds to having the same integrated mass flux over both the
+    # top and bottom boundary. otherwise it is impossible to conserve mass.
+    # in fact, the formulation used for the other wavenumbers results in nz-1
+    # equations for the pressure plus one equation w_top-w_bottom=0. therefore,
+    # we need to specify an additional equation, which is equivalent to fixing
+    # the absolute value of the horizontal mean of pressure somewhere in the
+    # domain. the absolute value is undetermined because only the gradients
+    # of pressure appear in the problem. we can replace any of the equations
+    # with a different one that places a restriction on the value of p. one way
+    # of doing so is replacing the last line with (p[nz-1]-3p[nz])/δz²=0, which
+    # keeps the system of equations symmetric tridiagonal and sets the (second
+    # order FD approximation of) pressure at the top of the domain to zero.
+    # it could also be done by replacing a different line in order to get a
+    # higher order approximation at the boundary, but there is little reason to
+    # do so, since the absolute values don’t matter anyway.
+    div_hat[1,1,end] = 0
+
+    div_hat
+end
+
+"""
+This computes a pressure field `p_hat`, the gradient of which can be added to
+the velocity field vel_hat to make it divergence free. Note that in a time
+stepping algorithm, we usually want (vel_hat + dt ∇ p_hat) to be divergence
+free. In this case, we simply solve for dt·p_hat with the following algorithm.
+"""
+function solve_pressure_fd!(p_hat, p_solver::SymThomasBatch, vel_hat,
+        bc_w::DirichletBC, dx, dy, dz)
+
+    # build divergence of RHS in frequency domain, write into p_hat array
+    compute_divergence_fd!(p_hat, vel_hat, bc_w, dx, dy, dz)
+
+    # solve for pressure, overwriting divergence
+    LinearAlgebra.ldiv!(p_solver, p_hat)
+end
+
+function subtract_pressure_gradient_fd!(field_hat, p_hat, dx, dy, dz)
+    @. field_hat[1] -= p_hat .* dx
+    @. field_hat[2] -= p_hat .* dy
+    for k=2:size(p_hat,3) # do no use size(field_hat) since it can contain buffers
+        @. @views field_hat[3][:,:,k] -= (p_hat[:,:,k] - p_hat[:,:,k-1]) * dz
+    end
+    field_hat
 end
 
 noslip(T) = (DirichletBC{T}(zero(T)), DirichletBC{T}(zero(T)),
@@ -121,6 +297,36 @@ end
 function build_rhs!(cf)
     set_advection_fd!(cf.rhs_hat, cf.vel_hat, cf.rot_hat, cf.df, cf.tf_big)
     add_laplacian_fd!(cf.rhs_hat, cf.vel_hat, cf.df)
+    add_forcing_fd!(cf.rhs_hat, cf.forcing)
+    solve_pressure_fd!(cf.p_hat, cf.p_solver, cf.rhs_hat, cf.lower_bc[3],
+            cf.df.dx1, cf.df.dy1, cf.df.dz1)
+    subtract_pressure_gradient_fd!(cf.rhs_hat, cf.p_hat, cf.df.dx1, cf.df.dy1, cf.df.dz1)
+end
+
+function integrate!(cf, dt, nt; verbose=false)
+    to = TimerOutput()
+    @timeit to "time stepping" for i=1:nt
+        @timeit to "advection" set_advection_fd!(cf.rhs_hat, cf.vel_hat, cf.rot_hat, cf.df, cf.tf_big, to)
+        @timeit to "diffusion" add_laplacian_fd!(cf.rhs_hat, cf.vel_hat, cf.df)
+        @timeit to "forcing" add_forcing_fd!(cf.rhs_hat, cf.forcing)
+        @timeit to "pressure" solve_pressure_fd!(cf.p_hat, cf.p_solver, cf.rhs_hat, cf.lower_bc[3],
+                cf.df.dx1, cf.df.dy1, cf.df.dz1)
+        @timeit to "pressure" subtract_pressure_gradient_fd!(cf.rhs_hat, cf.p_hat,
+                cf.df.dx1, cf.df.dy1, cf.df.dz1)
+        @timeit to "velocity update" begin
+            @. @views cf.vel_hat[1][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[1]
+            @. @views cf.vel_hat[2][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[2]
+            @. @views cf.vel_hat[3][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[3]
+        end
+    end
+    verbose && show(to)
+    cf
+end
+
+function add_forcing_fd!(rhs_hat, forcing)
+    @. rhs_hat[1][1,1,:] += forcing[1]
+    @. rhs_hat[2][1,1,:] += forcing[2]
+    @. rhs_hat[3][1,1,:] += forcing[3]
 end
 
 make_array_fd(gd::Grid{T}) where T = Array(zeros(Complex{T},
@@ -200,7 +406,7 @@ end
 @inline rot_v!(rot_v, u¯, u⁺, w, dx, dz) = @. rot_v = (u⁺ - u¯) * dz - w * dx
 @inline rot_w!(rot_w, u, v, dx, dy)      = @. rot_w = v * dx - u * dy
 
-function compute_vorticity_fd!(rot_hat, vel_hat, dx, dy, dz)
+@inline function compute_vorticity_fd!(rot_hat, vel_hat, dx, dy, dz)
     for k=1:size(vel_hat[1],3)-2 # inner z-layers
         @views rot_u!(rot_hat[1][:,:,k],
                       vel_hat[2][:,:,k-1], vel_hat[2][:,:,k], vel_hat[3][:,:,k],
@@ -324,29 +530,31 @@ function compute_advection_pd!(adv, rot, vel, buffers)
     adv
 end
 
-function set_advection_fd!(rhs_hat, vel_hat, rot_hat, df, tf_big)
+function set_advection_fd!(rhs_hat, vel_hat, rot_hat, df, tf_big, to)
     # need: rot_hat[1:3], vel_big[1:3], rot_big[1:3], plan_big_{fwd,bwd},
     # buffer_big_fd, buffer_layers_pd[1:5]
 
     # compute vorticity in fourier domain
-    compute_vorticity_fd!(rot_hat, vel_hat, df.dx1, df.dy1, df.dz1)
+    @timeit to "vorticity" compute_vorticity_fd!(rot_hat, vel_hat, df.dx1, df.dy1, df.dz1)
 
+    @timeit to "rename buffers" begin
     rot_big = tf_big.buffers_pd[1:3]
     vel_big = tf_big.buffers_pd[4:6]
     adv_big = tf_big.buffers_pd[7:9]
+    end
 
     # for each velocity and vorticity, pad the frequencies and transform
     # to physical space (TODO: fix boundaries)
-    for (field_big, field_hat) in zip((rot_big..., vel_big...), (rot_hat..., vel_hat...))
+    @timeit to "fwd transforms" for (field_big, field_hat) in zip((rot_big..., vel_big...), (rot_hat..., vel_hat...))
         ifft_dealiased!(field_big, field_hat, tf_big.plan_bwd, tf_big.buffers_fd[1])
     end
 
     # compute the advection term in physical domain
-    compute_advection_pd!(adv_big, rot_big, vel_big, tf_big.buffer_layers_pd[1:5])
+    @timeit to "non-linear part" compute_advection_pd!(adv_big, rot_big, vel_big, tf_big.buffer_layers_pd[1:5])
 
     # transform advection term back to frequency domain and set RHS to result,
     # skipping higher frequencies for dealiasing
-    for (field_hat, field_big) in zip(rhs_hat, adv_big)
+    @timeit to "bwd transform" for (field_hat, field_big) in zip(rhs_hat, adv_big)
         fft_dealiased!(field_hat, field_big, tf_big.plan_fwd, tf_big.buffers_fd[1])
     end
 

@@ -31,7 +31,7 @@ function test_basics()
     @test p.vel_hat[1][2,1,0] ≈ -0.5
     @test p.vel_hat[1][2,1,end] ≈ -0.5
 
-    CF.build_rhs!(p)
+    CF.integrate!(p, 1e-6, 1)
 end
 
 @testset "Basics" begin
