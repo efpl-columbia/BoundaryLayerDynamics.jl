@@ -1,12 +1,20 @@
 SupportedReals = Union{Float32,Float64}
 
+"""
+The Grid type holds the inforrmation about the geometry of a channel flow. For
+the wave numbers, it assumes that the Nyquist frequency is not stored.
+"""
 struct Grid{T<:SupportedReals} # only allow Float64 for now
     n::Tuple{Int,Int,Int}
     l::Tuple{T,T,T}
     δ::Tuple{T,T,T}
     k::Tuple{Array{Int,1},Array{Int,1}}
-    Grid(n::Tuple{Int,Int,Int}, l::Tuple{T,T,T}) where T<:SupportedReals = new{T}(
-            n, l, l./n, (wavenumbers(n[1])[1:div(n[1],2)+1], wavenumbers(n[2])))
+    Grid(n::Tuple{Int,Int,Int}, l::Tuple{T,T,T}) where T<:SupportedReals = begin
+        nx_nonyquist = isodd(n[1]) ? n[1] : n[1]-1
+        ny_nonyquist = isodd(n[2]) ? n[2] : n[2]-1
+        new{T}(n, l, l./n, (wavenumbers(nx_nonyquist)[1:div(nx_nonyquist,2)+1],
+                wavenumbers(ny_nonyquist)))
+    end
 end
 
 Grid(n) = Grid(n, (2π, 2π, 1.0))
@@ -143,9 +151,9 @@ noslip(T) = (DirichletBC{T}(zero(T)), DirichletBC{T}(zero(T)),
 freeslip(T) = (NeumannBC{T}(zero(T), zero(T)), NeumannBC{T}(zero(T), zero(T)),
         DirichletBC{T}(zero(T)))
 
-make_array_fd(gd::Grid{T}) where T = Array(zeros(Complex{T},
-        div(gd.n[1],2)+1, gd.n[2], gd.n[3]))
+make_array_fd(gd::Grid{T}) where T = Array(zeros(Complex{T}, length(gd.k[1]),
+        length(gd.k[2]), gd.n[3]))
 
 make_buffered_array_fd(gd::Grid{T}) where T = OffsetArray(zeros(Complex{T},
-        div(gd.n[1],2)+1, gd.n[2], gd.n[3]+2),
-        1:div(gd.n[1],2)+1, 1:gd.n[2], 0:gd.n[3]+1)
+        length(gd.k[1]), length(gd.k[2]), gd.n[3]+2),
+        1:length(gd.k[1]), 1:length(gd.k[2]), 0:gd.n[3]+1)

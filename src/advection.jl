@@ -30,9 +30,12 @@ function ifft_dealiased!(field_big, field_hat, plan_big_bwd, buffer_big_fd)
 
     # copy frequencies such that the extra frequencies are zero
     # TODO: multiply with 1/(nx*ny) -> which nx & ny?
+    # TODO: test these expansions for new approach where the frequency domain
+    #       arrays no longer include the nyquist frequency
     # -> which nx & ny? should be small values to get correct velocities in
     # physical domain, but needs to be big one to get correct frequencies again
-    # when going back to the frequency domain
+    # when going back to the frequency domain (should always multiply when
+    # doing forward transform, not for backward transform)
     for i in CartesianIndices(buffer_big_fd)
         if 1+kx_max < i[1] || 1+ky_max < i[2] <= ny_big - ky_max
             buffer_big_fd[i] = 0
