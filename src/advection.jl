@@ -1,163 +1,207 @@
 # compute one layer of vorticity (in frequency domain)
 # (dw/dy - dv/dz) and (du/dz - dw/dx) on w-nodes, (dv/dx - du/dy) on uvp-nodes
-@inline rot_u!(rot_u, v¯, v⁺, w, dy, dz) = @. rot_u = w * dy - (v⁺ - v¯) * dz
-@inline rot_v!(rot_v, u¯, u⁺, w, dx, dz) = @. rot_v = (u⁺ - u¯) * dz - w * dx
-@inline rot_w!(rot_w, u, v, dx, dy)      = @. rot_w = v * dx - u * dy
+@inline rotu!(rotu, v¯, v⁺, w, dy, dz) = @. rotu = w * dy - (v⁺ - v¯) * dz
+@inline rotv!(rotv, u¯, u⁺, w, dx, dz) = @. rotv = (u⁺ - u¯) * dz - w * dx
+@inline rotw!(rotw, u, v, dx, dy)      = @. rotw = v * dx - u * dy
 
-@inline function compute_vorticity_fd!(rot_hat, vel_hat, dx, dy, dz)
-    for k=1:size(vel_hat[1],3)-2 # inner z-layers
-        @views rot_u!(rot_hat[1][:,:,k],
-                      vel_hat[2][:,:,k-1], vel_hat[2][:,:,k], vel_hat[3][:,:,k],
-                      dy[:,:,1], dz)
-        @views rot_v!(rot_hat[2][:,:,k],
-                      vel_hat[1][:,:,k-1], vel_hat[1][:,:,k], vel_hat[3][:,:,k],
-                      dy[:,:,1], dz)
-        @views rot_w!(rot_hat[3][:,:,k], vel_hat[1][:,:,k], vel_hat[2][:,:,k],
-                      dx[:,:,1], dy[:,:,1])
+function rotu!(rotu_layers::NTuple{IZV}, v_layers::NTuple{IZH}, w_layers::NTuple{IZV},
+        df::DerivativeFactors, upper_bcv::BoundaryCondition) where {IZH,IZV}
+    v_above = get_layer_above(v_layers, upper_bcv)
+    for i=1:IZH-1
+        rotu!(rotu_layers[i], v_layers[i], v_layers[i+1], w_layers[i], df.dy1, df.dz1)
+    end
+    if IZH == IZV # this is not the case for the process at the top of the domain
+        rotu!(rotu_layers[IZV], v_layers[IZH], v_above, w_layers[IZV], df.dy1, df.dz1)
     end
 end
 
-"""
-Transform a field from the frequency domain to an extended set of nodes in the
-physical domain by adding extra frequencies set to zero.
-"""
-function ifft_dealiased!(field_big, field_hat, plan_big_bwd, buffer_big_fd)
-
-    # highest frequencies (excluding nyquist) in non-expanded array
-    ny, ny_big = size(field_hat,2), size(buffer_big_fd,2)
-    kx_max = size(field_hat,1) - 2 # [0, 1…kmax, nyquist]
-    ky_max = div(ny,2) - 1 # [0, 1…kmax, nyquist, -kmax…1]
-
-    # copy frequencies such that the extra frequencies are zero
-    # TODO: multiply with 1/(nx*ny) -> which nx & ny?
-    # TODO: test these expansions for new approach where the frequency domain
-    #       arrays no longer include the nyquist frequency
-    # -> which nx & ny? should be small values to get correct velocities in
-    # physical domain, but needs to be big one to get correct frequencies again
-    # when going back to the frequency domain (should always multiply when
-    # doing forward transform, not for backward transform)
-    for i in CartesianIndices(buffer_big_fd)
-        if 1+kx_max < i[1] || 1+ky_max < i[2] <= ny_big - ky_max
-            buffer_big_fd[i] = 0
-        else
-            buffer_big_fd[i] = i[2] <= 1+ky_max ? field_hat[i] :
-                field_hat[i[1], i[2] - (ny_big - ny), i[3]]
-        end
+function rotv!(rotv_layers::NTuple{IZV}, u_layers::NTuple{IZH}, w_layers::NTuple{IZV},
+        df::DerivativeFactors, upper_bcu::BoundaryCondition) where {IZH,IZV}
+    u_above = get_layer_above(u_layers, upper_bcu)
+    for i=1:IZH-1
+        rotv!(rotv_layers[i], u_layers[i], u_layers[i+1], w_layers[i], df.dx1, df.dz1)
     end
-
-    LinearAlgebra.mul!(field_big, plan_big_bwd, buffer_big_fd)
-    field_big
+    if IZH == IZV # this is not the case for the process at the top of the domain
+        rotv!(rotv_layers[IZV], u_layers[IZH], u_above, w_layers[IZV], df.dx1, df.dz1)
+    end
 end
 
-"""
-Transform a field from an extended set of nodes in physical domain back to the
-frequency domain and remove extra frequencies.
-"""
-function fft_dealiased!(field_hat, field_big, plan_big_fwd, buffer_big_fd)
-
-    LinearAlgebra.mul!(buffer_big_fd, plan_big_fwd, field_big)
-
-    # highest frequencies (excluding nyquist) in non-expanded array
-    # warning: this assumes that nx & ny (before the fft)
-    #          are even in the non-expanded array
-    ny, ny_big = size(field_hat,2), size(buffer_big_fd,2)
-    kx_max = size(field_hat,1) - 2 # [0, 1…kmax, nyquist]
-    ky_max = div(ny,2) - 1 # [0, 1…kmax, nyquist, -kmax…1]
-
-    # fft normalization factor 1/(nx*ny) is applied whenever forward transform
-    # is performed
-    fft_factor = 1 / (size(field_big,1) * size(field_big,2))
-
-    for i in innerindices(field_hat)
-        if i[1] == ky_max+2 || i[2] == ky_max+2
-            field_hat[i] += 0
-        else
-            field_hat[i] = i[2] <= 1+ky_max ? buffer_big_fd[i] * fft_factor :
-                buffer_big_fd[i[1], i[2] + (ny_big - ny), i[3]] * fft_factor
-        end
+function rotw!(rotw_layers::NTuple{IZH}, u_layers::NTuple{IZH}, v_layers::NTuple{IZH},
+        df::DerivativeFactors) where {IZH,IZV}
+    for i=1:IZH
+        rotw!(rotw_layers[i], u_layers[i], v_layers[i], df.dx1, df.dy1)
     end
-    field_hat
 end
 
 # compute one layer of -(roty[w]*w[w]-rotz[uvp]*v[uvp]) on uvp-nodes
-@inline adv_u!(adv_u, v, roty¯, roty⁺, w¯, w⁺, rotz) =
-        @. adv_u = rotz * v - 0.5 * (roty¯ * w¯ + roty⁺ * w⁺)
-
-# compute one layer of -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) on uvp-nodes
-@inline adv_v!(adv_v, u, rotx¯, rotx⁺, w¯, w⁺, rotz) =
-        @. adv_v = 0.5 * (rotx¯ * w¯ + rotx⁺ * w⁺) - rotz * u
-
-# compute one layer of -(rotx[w]*v[uvp]-roty[w]*u[uvp]) on w-nodes
-@inline adv_w!(adv_w, u¯, u⁺, rotx, v¯, v⁺, roty) =
-        @. adv_w = roty * 0.5 * (u¯ + u⁺) - rotx * 0.5 * (v¯ + v⁺)
-
-function compute_advection_pd!(adv, rot, vel, buffers)
-
-    # TODO: decide whether vel_big should contain buffer space & adapt accordingly
-    iz_min, iz_max = (1, size(vel[1],3)) # inner layers
-
-    u_below, v_below, w_above, rotx_above, roty_above = buffers[1:5]
-    # TODO: exchange information on boundaries (plus BCs)
-
-    # for the x- and y-advection, we need to interpolate rot[1]/rot[2] and vel[3]
-    # from w- up to uvp-nodes. we exclude the last layer as it needs data from
-    # the w-layer above
-    # for the z-advection, we need to interpolate vel[1] and vel[2] from
-    # uvp-nodes down to w-nodes. we exclude the first layer as it needs data from
-    # the uvp-layer below
-    for k=iz_min:iz_max-1
-        @views adv_u!(adv[1][:,:,k],
-                      vel[2][:,:,k], rot[2][:,:,k], rot[2][:,:,k+1],
-                      vel[3][:,:,k], vel[3][:,:,k+1], rot[3][:,:,k])
-        @views adv_v!(adv[2][:,:,k],
-                      vel[1][:,:,k], rot[1][:,:,k], rot[1][:,:,k+1],
-                      vel[3][:,:,k], vel[3][:,:,k+1], rot[3][:,:,k])
-        @views adv_w!(adv[3][:,:,k+1],
-                      vel[1][:,:,k], vel[1][:,:,k+1], rot[1][:,:,k+1],
-                      vel[2][:,:,k], vel[2][:,:,k+1], rot[2][:,:,k+1])
-    end
-
-    # add last layer, using the values above & below as exchanged earlier
-    @views adv_u!(adv[1][:,:,iz_max],
-                  vel[2][:,:,iz_max], rot[2][:,:,iz_max], roty_above,
-                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
-    @views adv_v!(adv[2][:,:,iz_max],
-                  vel[1][:,:,iz_max], rot[1][:,:,iz_max], rotx_above,
-                  vel[3][:,:,iz_max], w_above, rot[3][:,:,iz_max])
-    @views adv_w!(adv[3][:,:,iz_min],
-                  u_below, vel[1][:,:,iz_min], rot[1][:,:,iz_min],
-                  v_below, vel[2][:,:,iz_min], rot[2][:,:,iz_min])
-
-    adv
+@inline advu!(advu, v, rotv¯, rotv⁺, w¯, w⁺, rotw) =
+        @. advu = rotw * v - 0.5 * (rotv¯ * w¯ + rotv⁺ * w⁺)
+@inline advu!(advu, v, rotv¯, rotv⁺, lbcw::DirichletBC, w⁺, rotw) = begin
+    lbcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
+    @. advu = rotw * v - 0.5 * (rotv⁺ * w⁺)
+end
+@inline advu!(advu, v, rotv¯, rotv⁺, w¯, ubcw::DirichletBC, rotw) = begin
+    ubcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
+    @. advu = rotw * v - 0.5 * (rotv¯ * w¯)
 end
 
-function set_advection_fd!(rhs_hat, vel_hat, rot_hat, df, tf_big, to)
-    # need: rot_hat[1:3], vel_big[1:3], rot_big[1:3], plan_big_{fwd,bwd},
-    # buffer_big_fd, buffer_layers_pd[1:5]
+# compute one layer of -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) on uvp-nodes
+@inline advv!(advv, u, rotu¯, rotu⁺, w¯, w⁺, rotw) =
+        @. advv = 0.5 * (rotu¯ * w¯ + rotu⁺ * w⁺) - rotw * u
+@inline advv!(advv, u, rotu¯, rotu⁺, lbcw::DirichletBC, w⁺, rotw) = begin
+    lbcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
+    @. advv = 0.5 * (rotu⁺ * w⁺) - rotw * u
+end
+@inline advv!(advv, u, rotu¯, rotu⁺, w¯, ubcw::DirichletBC, rotw) = begin
+    ubcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
+    @. advv = 0.5 * (rotu¯ * w¯) - rotw * u
+end
 
-    # compute vorticity in fourier domain
-    @timeit to "vorticity" compute_vorticity_fd!(rot_hat, vel_hat, df.dx1, df.dy1, df.dz1)
+# compute one layer of -(rotx[w]*v[uvp]-roty[w]*u[uvp]) on w-nodes
+@inline advw!(advw, u¯, u⁺, rotu, v¯, v⁺, rotv) =
+        @. advw = rotv * 0.5 * (u¯ + u⁺) - rotu * 0.5 * (v¯ + v⁺)
 
-    @timeit to "rename buffers" begin
-    rot_big = tf_big.buffers_pd[1:3]
-    vel_big = tf_big.buffers_pd[4:6]
-    adv_big = tf_big.buffers_pd[7:9]
+function advu!(advu_layers::NTuple{IZH},
+        v_layers::NTuple{IZH}, rotv_layers::NTuple{IZV},
+        w_layers::NTuple{IZV}, rotw_layers::NTuple{IZH},
+        lower_bcu::BoundaryCondition, upper_bcu::BoundaryCondition,
+        lower_bcw::BoundaryCondition, upper_bcw::BoundaryCondition) where {IZH,IZV}
+
+    rotv_below = get_layer_below_pd(rotv_layers, lower_bcu)
+    w_below    = get_layer_below_pd(w_layers,    lower_bcw)
+
+    # inner layers, same for all processes (possibly empty)
+    for i = 1:IZH-1
+        advu!(advu_layers[i], v_layers[i],
+                i>1 ? rotv_layers[i-1] : rotv_below, rotv_layers[i],
+                i>1 ?    w_layers[i-1] :    w_below,    w_layers[i],
+                rotw_layers[i])
     end
 
-    # for each velocity and vorticity, pad the frequencies and transform
-    # to physical space (TODO: fix boundaries)
-    @timeit to "fwd transforms" for (field_big, field_hat) in zip((rot_big..., vel_big...), (rot_hat..., vel_hat...))
-        ifft_dealiased!(field_big, field_hat, tf_big.plan_bwd, tf_big.buffers_fd[1])
+    # last layer, can be different
+    advu!(advu_layers[IZH], v_layers[IZH],
+            IZH > 1    ? rotv_layers[IZH-1] : rotv_below, # rotv¯
+            IZH == IZV ? rotv_layers[IZH]   : upper_bcu,  # rotv⁺
+            IZH > 1    ?    w_layers[IZH-1] : w_below,    # w¯
+            IZH == IZV ?    w_layers[IZH]   : upper_bcw,  # w⁺
+            rotw_layers[IZH])
+end
+
+function advv!(advv_layers::NTuple{IZH},
+        u_layers::NTuple{IZH}, rotu_layers::NTuple{IZV},
+        w_layers::NTuple{IZV}, rotw_layers::NTuple{IZH},
+        lower_bcv::BoundaryCondition, upper_bcv::BoundaryCondition,
+        lower_bcw::BoundaryCondition, upper_bcw::BoundaryCondition) where {IZH,IZV}
+
+    rotu_below = get_layer_below_pd(rotu_layers, lower_bcv)
+    w_below    = get_layer_below_pd(w_layers,    lower_bcw)
+
+    # inner layers, same for all processes (possibly empty)
+    for i = 1:IZH-1
+        advv!(advv_layers[i], u_layers[i],
+                i>1 ? rotu_layers[i-1] : rotu_below, rotu_layers[i],
+                i>1 ?    w_layers[i-1] :    w_below,    w_layers[i],
+                rotw_layers[i])
     end
 
-    # compute the advection term in physical domain
-    @timeit to "non-linear part" compute_advection_pd!(adv_big, rot_big, vel_big, tf_big.buffer_layers_pd[1:5])
+    # last layer, can be different
+    advv!(advv_layers[IZH], u_layers[IZH],
+            IZH > 1    ? rotu_layers[IZH-1] : rotu_below, # rotu¯
+            IZH == IZV ? rotu_layers[IZH]   : upper_bcv,  # rotu⁺
+            IZH > 1    ?    w_layers[IZH-1] : w_below,    # w¯
+            IZH == IZV ?    w_layers[IZH]   : upper_bcw,  # w⁺
+            rotw_layers[IZH])
+end
 
-    # transform advection term back to frequency domain and set RHS to result,
-    # skipping higher frequencies for dealiasing
-    @timeit to "bwd transform" for (field_hat, field_big) in zip(rhs_hat, adv_big)
-        fft_dealiased!(field_hat, field_big, tf_big.plan_fwd, tf_big.buffers_fd[1])
+function advw!(advw_layers::NTuple{IZV},
+        u_layers::NTuple{IZH}, rotu_layers::NTuple{IZV},
+        v_layers::NTuple{IZH}, rotv_layers::NTuple{IZV},
+        upper_bcu::BoundaryCondition, upper_bcv::BoundaryCondition) where {IZH,IZV}
+
+    u_above = get_layer_above(u_layers, upper_bcu)
+    v_above = get_layer_above(v_layers, upper_bcv)
+
+    # inner layers, same for all processes (possibly empty)
+    for i = 1:IZV-1
+        advw!(advw_layers[i], u_layers[i], u_layers[i+1], rotu_layers[i],
+                              v_layers[i], v_layers[i+1], rotv_layers[i])
     end
 
-    rhs_hat
+    # last layer, does not exist on last node
+    IZV == IZH && advw!(advw_layers[IZV], u_layers[IZH], u_above, rotu_layers[IZV],
+                                          v_layers[IZH], v_above, rotv_layers[IZV])
+end
+
+struct AdvectionBuffers{T}
+    rotu_fd::Array{Complex{T},3}
+    rotv_fd::Array{Complex{T},3}
+    rotw_fd::Array{Complex{T},3}
+    u_pd::Array{T,3}
+    v_pd::Array{T,3}
+    w_pd::Array{T,3}
+    rotu_pd::Array{T,3}
+    rotv_pd::Array{T,3}
+    rotw_pd::Array{T,3}
+    advu_pd::Array{T,3}
+    advv_pd::Array{T,3}
+    advw_pd::Array{T,3}
+
+    AdvectionBuffers(T, gd::DistributedGrid) =
+        new{T}(
+            # rot_fd
+            zeros_fd(T, gd, NodeSet(:V)),
+            zeros_fd(T, gd, NodeSet(:V)),
+            zeros_fd(T, gd, NodeSet(:H)),
+
+            # vel_pd
+            zeros_pd(T, gd, NodeSet(:H)),
+            zeros_pd(T, gd, NodeSet(:H)),
+            zeros_pd(T, gd, NodeSet(:V)),
+
+            # rot_pd
+            zeros_pd(T, gd, NodeSet(:V)),
+            zeros_pd(T, gd, NodeSet(:V)),
+            zeros_pd(T, gd, NodeSet(:H)),
+
+            # adv_pd
+            zeros_pd(T, gd, NodeSet(:H)),
+            zeros_pd(T, gd, NodeSet(:H)),
+            zeros_pd(T, gd, NodeSet(:V)),
+        )
+end
+
+function set_advection!(rhs, vel, df::DerivativeFactors, ht::HorizontalTransform,
+        lower_bcs::Tuple, upper_bcs::Tuple, b::AdvectionBuffers)
+
+    # compute vorticity in frequency domain
+    ul, vl, wl = map(layers, vel)
+    rotu!(layers(b.rotu_fd), vl, wl, df, upper_bcs[2])
+    rotv!(layers(b.rotv_fd), ul, wl, df, upper_bcs[1])
+    rotw!(layers(b.rotw_fd), ul, vl, df)
+
+    # transform vorticity to physical domain
+    get_field!(b.rotu_pd, ht, b.rotu_fd, NodeSet(:V))
+    get_field!(b.rotv_pd, ht, b.rotv_fd, NodeSet(:V))
+    get_field!(b.rotw_pd, ht, b.rotw_fd, NodeSet(:H))
+
+    # transform velocity to physical domain
+    get_field!(b.u_pd, ht, vel[1], NodeSet(:H))
+    get_field!(b.v_pd, ht, vel[2], NodeSet(:H))
+    get_field!(b.w_pd, ht, vel[3], NodeSet(:V))
+
+    # compute advection term in physical domain
+    upd, vpd, wpd = map(layers, (b.u_pd, b.v_pd, b.w_pd))
+    rupd, rvpd, rwpd = map(layers, (b.rotu_pd, b.rotv_pd, b.rotw_pd))
+    lbcu, lbcv, lbcw = lower_bcs
+    ubcu, ubcv, ubcw = upper_bcs
+    advu!(layers(b.advu_pd), vpd, rvpd, wpd, rwpd, lbcu, ubcu, lbcw, ubcw)
+    advv!(layers(b.advv_pd), upd, rupd, wpd, rwpd, lbcv, ubcv, lbcw, ubcw)
+    advw!(layers(b.advw_pd), upd, rupd, vpd, rvpd, ubcu, ubcv)
+
+    # transform advection term to frequency domain (overwriting rhs)
+    set_field!(rhs[1], ht, b.advu_pd, NodeSet(:H))
+    set_field!(rhs[2], ht, b.advv_pd, NodeSet(:H))
+    set_field!(rhs[3], ht, b.advw_pd, NodeSet(:V))
+
+    rhs
 end

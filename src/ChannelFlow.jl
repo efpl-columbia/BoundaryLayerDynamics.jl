@@ -1,12 +1,12 @@
 module ChannelFlow
 
-import LinearAlgebra, MPI
-using OffsetArrays, FFTW, TimerOutputs
+import LinearAlgebra, MPI, FFTW, TimerOutputs
 
-include("types.jl")
-include("initialization.jl")
-include("boundary_conditions.jl")
+export ChannelFlowProblem, default_channel, integrate
+
+include("transform.jl")
 include("advection.jl")
+include("diffusion.jl")
 include("pressure_solver.jl")
 include("integration.jl")
 

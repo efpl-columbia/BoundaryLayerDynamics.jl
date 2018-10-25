@@ -1,67 +1,101 @@
-#=
-missing steps:
-- fix odd/even frequencies (drop Nyquist from the start)
-=#
-
-@inline innerindices(A::OffsetArray) = CartesianIndices((1:size(A,1),
-        1:size(A,2), 1:size(A,3)-2))
-@inline innerindices(A::Array) = CartesianIndices(A)
-
-"""
-Compute the Laplacian of a velocity and add it to the RHS array,
-all in frequency domain. Note that this requires the values at iz=0
-and iz=end in the vel_hat array, so they must be set from boundary
-conditions and MPI exchanges before calling this function. The lowest
-level of w-nodes can be set to NaNs, as the iz=1 level is at the
-boundary and should not have a RHS.
-"""
-function add_laplacian_fd!(rhs_hat, vel_hat, df::DerivativeFactors)
-    # for uvp-nodes: rely on values in iz=0 and iz=end in vel_hat for
-    # top & bottom layer
-    for i in innerindices(vel_hat)
-        rhs_hat[i] = vel_hat[i[1], i[2], i[3]-1] * df.dz2 +
-                (df.dx2[i[1]] + df.dy2[i[2]] - 2 * df.dz2) +
-                vel_hat[i[1], i[2], i[3]+1] * df.dz2
-    end
-end
-
-function add_laplacian_fd!(rhs_hat::Tuple, vel_hat::Tuple, df::DerivativeFactors)
-    for (rh, vh) in zip(rhs_hat, vel_hat)
-        add_laplacian_fd!(rh, vh, df)
-    end
-end
-
-function add_forcing_fd!(rhs_hat, forcing)
+function add_forcing!(rhs_hat, forcing)
     @. rhs_hat[1][1,1,:] += forcing[1]
     @. rhs_hat[2][1,1,:] += forcing[2]
     @. rhs_hat[3][1,1,:] += forcing[3]
 end
 
-function build_rhs!(cf)
-    set_advection_fd!(cf.rhs_hat, cf.vel_hat, cf.rot_hat, cf.df, cf.tf_big)
-    add_laplacian_fd!(cf.rhs_hat, cf.vel_hat, cf.df)
-    add_forcing_fd!(cf.rhs_hat, cf.forcing)
-    solve_pressure_fd!(cf.p_hat, cf.p_solver, cf.rhs_hat, cf.lower_bc[3],
-            cf.df.dx1, cf.df.dy1, cf.df.dz1)
-    subtract_pressure_gradient_fd!(cf.rhs_hat, cf.p_hat, cf.df.dx1, cf.df.dy1, cf.df.dz1)
+init_velocity_fields(T, gd) = (zeros_fd(T, gd, NodeSet(:H)),
+                               zeros_fd(T, gd, NodeSet(:H)),
+                               zeros_fd(T, gd, NodeSet(:V)))
+
+function init_velocity(gd, ht::HorizontalTransform{T}, vel0, domain_size) where T
+    δ = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+    vel = init_velocity_fields(T, gd)
+    set_field!(vel[1], ht, vel0[1], δ, gd.iz_min, NodeSet(:H))
+    set_field!(vel[2], ht, vel0[2], δ, gd.iz_min, NodeSet(:H))
+    set_field!(vel[3], ht, vel0[3], δ, gd.iz_min, NodeSet(:V))
+    vel
 end
 
-function integrate!(cf, dt, nt; verbose=false)
-    to = TimerOutput()
-    @timeit to "time stepping" for i=1:nt
-        @timeit to "advection" set_advection_fd!(cf.rhs_hat, cf.vel_hat, cf.rot_hat, cf.df, cf.tf_big, to)
-        @timeit to "diffusion" add_laplacian_fd!(cf.rhs_hat, cf.vel_hat, cf.df)
-        @timeit to "forcing" add_forcing_fd!(cf.rhs_hat, cf.forcing)
-        @timeit to "pressure" solve_pressure_fd!(cf.p_hat, cf.p_solver, cf.rhs_hat, cf.lower_bc[3],
-                cf.df.dx1, cf.df.dy1, cf.df.dz1)
-        @timeit to "pressure" subtract_pressure_gradient_fd!(cf.rhs_hat, cf.p_hat,
-                cf.df.dx1, cf.df.dy1, cf.df.dz1)
-        @timeit to "velocity update" begin
-            @. @views cf.vel_hat[1][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[1]
-            @. @views cf.vel_hat[2][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[2]
-            @. @views cf.vel_hat[3][:,:,1:cf.grid.n[3]] += dt * cf.rhs_hat[3]
+init_pressure(T, gd) = zeros_fd(T, gd, NodeSet(:H))
+
+struct ChannelFlowProblem{P,T}
+    velocity::NTuple{3,Array{Complex{T},3}}
+    pressure::Array{Complex{T},3}
+    rhs::NTuple{3,Array{Complex{T},3}}
+    grid::DistributedGrid{P}
+    transform::HorizontalTransform{T}
+    derivatives::DerivativeFactors{T}
+    advection_buffers::AdvectionBuffers{T}
+    lower_bcs::NTuple{3,BoundaryCondition}
+    upper_bcs::NTuple{3,BoundaryCondition}
+    pressure_bc::DirichletBC
+    pressure_solver::DistributedBatchLDLt{P,T,Complex{T}}
+    diffusion_coeff::T
+    forcing::NTuple{3,T}
+
+    ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T}, Re::T,
+        open_channel::Bool, forcing::NTuple{3,T}, initial_conditions::NTuple{3,Function},
+        ) where {T<:SupportedReals} = begin
+
+        pressure_solver_batch_size = 64
+
+        gd = DistributedGrid(grid_size...)
+        ht = HorizontalTransform(T, gd)
+        df = DerivativeFactors(gd, domain_size)
+
+        new{proc_type(),T}(
+            init_velocity(gd, ht, initial_conditions, domain_size),
+            init_pressure(T, gd),
+            init_velocity_fields(T, gd),
+            gd, ht, df, AdvectionBuffers(T, gd),
+            bc_noslip(T, gd), open_channel ? bc_freeslip(T, gd) : bc_noslip(T, gd),
+            DirichletBC(gd, zero(T)), prepare_pressure_solver(gd, df, pressure_solver_batch_size),
+            1 / Re, forcing)
+    end
+end
+
+zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
+
+default_channel(grid_size, Re, open_channel=false) = ChannelFlowProblem(grid_size,
+    (2π,2π,1.0), Re, open_channel, (1.0,0.0,0.0), zero_ics(Float64))
+
+function show_all(to::TimerOutputs.TimerOutput)
+    if MPI.Initialized()
+        r = MPI.Comm_rank(MPI.COMM_WORLD)
+        s = MPI.Comm_size(MPI.COMM_WORLD)
+        for i=1:s
+            if i==r+1
+                println("Timing of process ", i, ":")
+                show(to)
+                println() # newline is missing in show(to)
+            end
+            MPI.Barrier(MPI.COMM_WORLD)
+        end
+    else
+        show(to)
+        println() # newline is missing in show(to)
+    end
+end
+
+function integrate!(cf, dt, nt)
+    to = TimerOutputs.TimerOutput()
+    TimerOutputs.@timeit to "time stepping" for i=1:nt
+        TimerOutputs.@timeit to "advection" set_advection!(cf.rhs, cf.velocity,
+            cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
+        TimerOutputs.@timeit to "diffusion" add_diffusion!(cf.rhs, cf.velocity,
+            cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
+        TimerOutputs.@timeit to "forcing" add_forcing!(cf.rhs, cf.forcing)
+        TimerOutputs.@timeit to "pressure" begin
+            solve_pressure!(cf.pressure, cf.rhs, cf.lower_bcs, cf.upper_bcs,
+                cf.pressure_bc, cf.derivatives, cf.pressure_solver)
+            subtract_pressure_gradient!(cf.rhs, cf.pressure, cf.derivatives, cf.pressure_bc)
+        end
+        TimerOutputs.@timeit to "velocity update" begin
+            @. @views cf.velocity[1] += dt * cf.rhs[1]
+            @. @views cf.velocity[2] += dt * cf.rhs[2]
+            @. @views cf.velocity[3] += dt * cf.rhs[3]
         end
     end
-    verbose && show(to)
-    cf
+    show_all(to)
 end
