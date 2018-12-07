@@ -15,8 +15,9 @@ function test_diffusion(NZ)
     Lu0d = (x,y,z) -> - (2 * z*(1-z) + 2) * sin(x) * cos(y)
     Lu0n = (x,y,z) -> - (cos(x) + sin(y) + 2)
 
-    bcd1 = CF.DirichletBC(gd, rval) # random value to test non-zero bc
-    bcd2 = CF.DirichletBC(gd, rval) # random value to test non-zero bc
+    # set up boundary conditions with random value to test non-zero bc
+    bcd1 = CF.DirichletBC(gd, rval)
+    bcd2 = CF.DirichletBC(gd, rval)
     bcn1 = CF.NeumannBC(gd, 1.0 + rval)
     bcn2 = CF.NeumannBC(gd, -1.0 + rval)
 
@@ -56,4 +57,4 @@ end
 test_diffusion(16)
 
 # also test the parallel version with one layer per process (not working, TODO)
-#MPI.Initialized() && test_diffusion(MPI.Comm_size(MPI.COMM_WORLD))
+MPI.Initialized() && test_diffusion(MPI.Comm_size(MPI.COMM_WORLD))

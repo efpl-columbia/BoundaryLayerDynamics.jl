@@ -90,6 +90,16 @@ end
     MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
     upper_bc
 end
+@inline function get_layer_above(layers::Tuple{}, upper_bc::DirichletBC{MaxProc,T}) where T
+    # this is a special case for when the top process does not have any layers,
+    # which is the case if there is only one layer per process. in this case, we
+    # fill the BC buffer with the boundary condition and pass that down to the
+    # process below
+    fill!(upper_bc.buffer_fd, zero(T))
+    upper_bc.buffer_fd[1,1] = upper_bc.value
+    MPI.Send(upper_bc.buffer_fd, upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
+    nothing # prevent the caller from trying to use the return value
+end
 @inline function get_layer_above(layers::NTuple{N,AbstractArray{Complex{T}}},
         upper_bc::BoundaryCondition{MinProc,T}) where {N,T}
     MPI.Recv!(upper_bc.buffer_fd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
@@ -114,7 +124,6 @@ end
     MPI.Wait!(r)
     upper_bc.buffer_pd
 end
-# TODO: resolve issues at top boundary of v-nodes when using 1 layer per process
 
 function add_diffusion!(rhs::NTuple{NZ}, layers::NTuple{NZ}, lower_bc, upper_bc,
     coeff, df::DerivativeFactors, nodes::NodeSet) where NZ
@@ -130,8 +139,6 @@ function add_diffusion!(rhs::NTuple{NZ}, layers::NTuple{NZ}, lower_bc, upper_bc,
         add_diffusion_layer!(rhs[end], layers[NZ-1], layers[NZ], layer_above, coeff, df, nodes)
     elseif NZ == 1
         add_diffusion_layer!(rhs[1], layer_below, layers[1], layer_above, coeff, df, nodes)
-    else
-        error("Invalid number of layers")
     end
 end
 

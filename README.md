@@ -2,18 +2,16 @@
 
 ## Current State
 
-The code has all parts to run a DNS with MPI, using multiple layers per process.
-The one case that is not handled completely yet is when there is just one layer
-per process. Also, while parts of the code have been tested thoroughly, the
-combined solver is poorly tested so it is not even clear whether it will
-reliably compute a solution, and if it does the solution might be very wrong.
+The code has all parts to run a DNS with MPI, using any number of  layers per
+process. While parts of the code have been tested thoroughly, the combined
+solver is poorly tested so it is not even clear whether it will reliably compute
+a solution, and if it does the solution might be very wrong.
 
 ### Next Steps
 
 - compare timing in more challenging setting
 - test advection term
 - test integration/global solver
-- implement one layer per process in diffusion term
 - batch size: play in interactive trials, implement automatic search for best value
 - improve handling of errors during MPI testing
 - consider more complete handling of boundary conditions in advection term
