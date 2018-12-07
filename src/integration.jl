@@ -80,8 +80,20 @@ function show_all(to::TimerOutputs.TimerOutput)
     end
 end
 
-function integrate!(cf, dt, nt)
+function show_progress(p::Integer)
+    0 <= p <= 100 || error("Progress has to be a percentage.")
+    print("│")
+    print(repeat("█", div(p,4)))
+    #mod(p,4) == 3 ? print("▓") : mod(p,4) == 2 ? print("▒") : mod(p,4) == 1 ? print("░") : nothing
+    mod(p,4) == 3 ? print("▊") : mod(p,4) == 2 ? print("▌") : mod(p,4) == 1 ? print("▎") : nothing
+    print(repeat(" ", div(100-p,4)))
+    print("│")
+    println(" ", p, "%")
+end
+
+function integrate!(cf, dt, nt; verbose=true)
     to = TimerOutputs.TimerOutput()
+    previous_progress = -1
     TimerOutputs.@timeit to "time stepping" for i=1:nt
         TimerOutputs.@timeit to "advection" set_advection!(cf.rhs, cf.velocity,
             cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
@@ -98,6 +110,11 @@ function integrate!(cf, dt, nt)
             @. @views cf.velocity[2] += dt * cf.rhs[2]
             @. @views cf.velocity[3] += dt * cf.rhs[3]
         end
+        percentage_complete = round(Int, 100*i/nt)
+        if percentage_complete > previous_progress
+            verbose && show_progress(percentage_complete)
+            previous_progress = percentage_complete
+        end
     end
-    show_all(to)
+    verbose && show_all(to)
 end
