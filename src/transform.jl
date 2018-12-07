@@ -1,5 +1,10 @@
 SupportedReals = Union{Float32,Float64}
 
+struct NodeSet{NS}
+    NodeSet(ns::Symbol) = ns == :H ? new{:H}() : ns == :V ? new{:V}() :
+        error("Invalid NodeSet: $(NS) (only :H and :V are allowed)")
+end
+
 abstract type ProcType end
 struct SingleProc <: ProcType end
 struct MinProc    <: ProcType end
@@ -8,15 +13,14 @@ struct MaxProc    <: ProcType end
 LowestProc  = Union{SingleProc, MinProc}
 HighestProc = Union{SingleProc, MaxProc}
 
-proc() = ((i,n) = proc_id(); (i,n) == (1,1) ? SingleProc() :
-        i == 1 ? MinProc() : i == n ? MaxProc() : InnerProc())
+proc_below() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) - 1
+proc_above() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) + 1
+proc_id() = MPI.Initialized() ? (MPI.Comm_rank(MPI.COMM_WORLD) + 1,
+        MPI.Comm_size(MPI.COMM_WORLD)) : (1,1)
+proc(i, n) = (i,n) == (1,1) ? SingleProc() : i == 1 ? MinProc() :
+             i == n ? MaxProc() : InnerProc()
 proc_type(p::P) where {P<:ProcType} = P
-proc_type() = proc_type(proc())
-
-struct NodeSet{NS}
-    NodeSet(ns::Symbol) = ns == :H ? new{:H}() : ns == :V ? new{:V}() :
-        error("Invalid NodeSet: $(NS) (only :H and :V are allowed)")
-end
+proc_type() = proc_type(proc(proc_id()...))
 
 struct DistributedGrid{P<:ProcType}
     nx_fd::Int
@@ -105,12 +109,6 @@ get_nz(gd::DistributedGrid, ns::NodeSet{:V}) = gd.nz_v
 @inline zeros_pd(T, gd::DistributedGrid, ns::NodeSet) =
         zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
 
-proc_id() = MPI.Initialized() ? (MPI.Comm_rank(MPI.COMM_WORLD) + 1,
-        MPI.Comm_size(MPI.COMM_WORLD)) : (1,1)
-
-proc_below() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) - 1
-proc_above() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) + 1
-
 abstract type BoundaryCondition{P<:ProcType,T} end
 struct DirichletBC{P,T} <: BoundaryCondition{P,T}
     value::T
@@ -133,10 +131,12 @@ struct NeumannBC{P,T} <: BoundaryCondition{P,T}
         zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
 end
 
-bc_noslip(T, gd) = (DirichletBC(gd, zero(T)), DirichletBC(gd, zero(T)),
-        DirichletBC(gd, zero(T)))
-bc_freeslip(T, gd) = (NeumannBC(gd, zero(T)), NeumannBC(gd, zero(T)),
-        DirichletBC(gd, zero(T)))
+bc_noslip(T, gd) = (DirichletBC(gd, zero(T)),
+                    DirichletBC(gd, zero(T)),
+                    DirichletBC(gd, zero(T)))
+bc_freeslip(T, gd) = (NeumannBC(gd, zero(T)),
+                      NeumannBC(gd, zero(T)),
+                    DirichletBC(gd, zero(T)))
 
 struct HorizontalTransform{T<:SupportedReals}
 
@@ -166,14 +166,14 @@ struct HorizontalTransform{T<:SupportedReals}
 end
 
 # utility functions to select the right plans & buffers at compile time
-@inline get_plan_fwd(ht, ns::NodeSet{:H}) = ht.plan_fwd_h
-@inline get_plan_fwd(ht, ns::NodeSet{:V}) = ht.plan_fwd_v
-@inline get_plan_bwd(ht, ns::NodeSet{:H}) = ht.plan_bwd_h
-@inline get_plan_bwd(ht, ns::NodeSet{:V}) = ht.plan_bwd_v
-@inline get_buffer_pd(ht, ns::NodeSet{:H}) = ht.buffer_pd_h
-@inline get_buffer_pd(ht, ns::NodeSet{:V}) = ht.buffer_pd_v
-@inline get_buffer_fd(ht, ns::NodeSet{:H}) = ht.buffer_fd_h
-@inline get_buffer_fd(ht, ns::NodeSet{:V}) = ht.buffer_fd_v
+@inline get_plan_fwd(ht, ::NodeSet{:H}) = ht.plan_fwd_h
+@inline get_plan_fwd(ht, ::NodeSet{:V}) = ht.plan_fwd_v
+@inline get_plan_bwd(ht, ::NodeSet{:H}) = ht.plan_bwd_h
+@inline get_plan_bwd(ht, ::NodeSet{:V}) = ht.plan_bwd_v
+@inline get_buffer_pd(ht, ::NodeSet{:H}) = ht.buffer_pd_h
+@inline get_buffer_pd(ht, ::NodeSet{:V}) = ht.buffer_pd_v
+@inline get_buffer_fd(ht, ::NodeSet{:H}) = ht.buffer_fd_h
+@inline get_buffer_fd(ht, ::NodeSet{:V}) = ht.buffer_fd_v
 
 
 """
