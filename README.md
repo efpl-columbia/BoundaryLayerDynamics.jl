@@ -3,19 +3,21 @@
 ## Current State
 
 The code has all parts to run a DNS with MPI, using any number of  layers per
-process. While parts of the code have been tested thoroughly, the combined
-solver is poorly tested so it is not even clear whether it will reliably compute
-a solution, and if it does the solution might be very wrong.
+process. Parts of the code have been tested thoroughly and the combined solver
+is tested for laminar Poiseuille flow. For turbulent flows, the solver is poorly
+tested so it is not even clear whether it will reliably compute a solution, and
+if it does the solution might be very wrong.
 
 ### Next Steps
 
 - compare timing in more challenging setting
 - test advection term
-- test integration/global solver
 - batch size: play in interactive trials, implement automatic search for best value
 - improve handling of errors during MPI testing
 - consider more complete handling of boundary conditions in advection term
 - clean up code: reorganize files, remove inconsistencies, consider improvements
+- add transient Couette flow to integration tests
+- test DNS of turbulent channel flow
 
 ## Organization of Code & Data
 
