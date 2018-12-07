@@ -57,8 +57,10 @@ end
 
 zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
 
-default_channel(grid_size, Re, open_channel=false) = ChannelFlowProblem(grid_size,
-    (2π,2π,1.0), Re, open_channel, (1.0,0.0,0.0), zero_ics(Float64))
+open_channel(grid_size, Re, domain = (4π, 2π, 1.0), ic = zero_ics(Float64)) =
+        ChannelFlowProblem(grid_size, domain, Re, true, (1.0, 0.0, 0.0), ic)
+closed_channel(grid_size, Re, domain = (4π, 2π, 2.0), ic = zero_ics(Float64)) =
+        ChannelFlowProblem(grid_size, domain, Re, false, (1.0, 0.0, 0.0), ic)
 
 function show_all(to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
