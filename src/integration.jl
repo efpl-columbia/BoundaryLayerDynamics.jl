@@ -114,6 +114,7 @@ function integrate!(cf, dt, nt; verbose=true)
         if percentage_complete > previous_progress
             verbose && show_progress(percentage_complete)
             previous_progress = percentage_complete
+            flush(stdout)
         end
     end
     verbose && show_all(to)
