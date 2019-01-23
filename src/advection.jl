@@ -122,7 +122,7 @@ function advw!(advw_layers::NTuple{IZV},
     v_above = get_layer_above(v_layers, upper_bcv)
 
     # inner layers, same for all processes (possibly empty)
-    for i = 1:IZV-1
+    for i = 1:IZH-1
         advw!(advw_layers[i], u_layers[i], u_layers[i+1], rotu_layers[i],
                               v_layers[i], v_layers[i+1], rotv_layers[i])
     end
