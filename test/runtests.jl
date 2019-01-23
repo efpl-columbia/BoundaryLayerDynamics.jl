@@ -1,6 +1,6 @@
 using ChannelFlow, Test
 
-import LinearAlgebra, MPI
+import LinearAlgebra, Random, MPI
 include("mpi_test_tools.jl")
 
 # shorthand for convenience, since we use a lot of unexported functions in tests

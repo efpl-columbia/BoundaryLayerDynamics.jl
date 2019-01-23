@@ -1,5 +1,5 @@
 using ChannelFlow, Test
-import LinearAlgebra, MPI
+import LinearAlgebra, Random, MPI
 
 include("mpi_test_tools.jl")
 
