@@ -34,6 +34,24 @@ struct DistributedGrid{P<:ProcType}
     iz_max::Int
 end
 
+function vertical_range(nz, proc_id, proc_count)
+    nz_per_proc = cld(nz, proc_count)
+    (1 + nz_per_proc * (proc_count - 1)) > nz && error("Some processes would have zero vertical layers")
+    iz_min = 1 + nz_per_proc * (proc_id - 1)
+    iz_max = min(iz_min + nz_per_proc - 1, nz)
+    nz_local_h = iz_max - iz_min + 1
+    nz_local_v = (proc_id == proc_count ? nz_local_h - 1 : nz_local_h)
+    iz_min, iz_max, nz_local_h, nz_local_v
+end
+
+# these more specific methods of vertical_range give the distribution of the
+# vertical indices for a specific set of nodes. note that the variant for the
+# V-nodes takes the global number of V-layers as argument, which is reduced by 1.
+vertical_range(nz_global_h, ns::NodeSet{:H}) =
+    (vr = vertical_range(nz_global_h, proc_id()...); (vr[1], vr[2]))
+vertical_range(nz_global_v, ns::NodeSet{:V}) =
+    (vr = vertical_range(nz_global_v+1, proc_id()...); (vr[1], vr[1]+vr[4]-1))
+
 function DistributedGrid(nx, ny, nz, proc_id, proc_count)
 
     # NOTE: IDs are one-based, unlike MPI ranks!
@@ -52,14 +70,7 @@ function DistributedGrid(nx, ny, nz, proc_id, proc_count)
     ny_pd = 3 * (1 + ky_max)
 
     # vertical sizes
-    is_min_proc = (proc_id == 1)
-    is_max_proc = (proc_id == proc_count)
-    nz_per_proc = cld(nz, proc_count)
-    iz_min = 1 + nz_per_proc * (proc_id - 1)
-    iz_max = min(iz_min + nz_per_proc - 1, nz)
-    nz_local = iz_max - iz_min + 1
-    nz_local_h = nz_local
-    nz_local_v = (is_max_proc ? nz_local - 1 : nz_local)
+    iz_min, iz_max, nz_local_h, nz_local_v = vertical_range(nz, proc_id, proc_count)
 
     DistributedGrid{proc_type()}(nx_fd, nx_pd, ny_fd, ny_pd,
             nz_local_h, nz_local_v, nz, iz_min, iz_max)
@@ -206,6 +217,9 @@ function get_field!(field_pd, ht::HorizontalTransform, field_fd, ns::NodeSet)
     field_pd
 end
 
+get_field(gd::DistributedGrid, ht::HorizontalTransform{T}, field_fd, ns::NodeSet) where T=
+    get_field!(zeros_pd(T, gd, ns), ht, field_fd, ns)
+
 """
 Transform a field from an extended set of nodes in physical domain back to the
 frequency domain and remove extra frequencies.
@@ -254,6 +268,10 @@ function set_field!(field_fd, ht::HorizontalTransform, field_pd::Function,
     end
     set_field!(field_fd, ht, buffer, ns)
 end
+
+set_field(gd::DistributedGrid, ht::HorizontalTransform{T}, field_pd::Function,
+        grid_spacing, ns::NodeSet) where {T} =
+        set_field!(zeros_fd(T, gd, ns), ht, field_pd, grid_spacing, gd.iz_min, ns)
 
 struct DerivativeFactors{T<:SupportedReals}
     dx1::Array{Complex{T},2}

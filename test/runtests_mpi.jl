@@ -12,6 +12,7 @@ MPI.Init()
     include("test_diffusion.jl")
     include("test_pressure_solver.jl")
     include("test_integration.jl")
+    include("test_output.jl")
 end
 
 MPI.Finalize()
