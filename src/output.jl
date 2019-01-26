@@ -2,7 +2,7 @@ max_dt_diffusion(coeff, dx, dy, dz) = min(dx, dy, dz)^2 / coeff
 
 function global_maximum(field::Array{T}) where {T<:SupportedReals}
     # specifying T avoids accidentially taking the maximum in Fourier space
-    local_max = mapreduce(abs, max, field, zero(T))
+    local_max = mapreduce(abs, max, field)
     MPI.Initialized() ? MPI.Allreduce(local_max, MPI.MAX, MPI.COMM_WORLD) : local_max
 end
 

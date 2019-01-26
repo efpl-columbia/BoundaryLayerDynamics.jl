@@ -11,7 +11,6 @@ if it does the solution might be very wrong.
 ### Next Steps
 
 - compare timing in more challenging setting
-- test advection term
 - batch size: play in interactive trials, implement automatic search for best value
 - improve handling of errors during MPI testing
 - consider more complete handling of boundary conditions in advection term
