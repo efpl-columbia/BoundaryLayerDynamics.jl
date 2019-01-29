@@ -221,30 +221,6 @@ function advection_error_convergence(Nh, Nv)
     εx, εy, εz
 end
 
-function test_convergence(N, ε; exponential=false, order=nothing,
-        threshold_linearity=0.99, threshold_slope=0.95)
-
-    X = exponential ? N : log.(N)
-    Y = log.(ε)
-
-    cov(x,y) = (n = length(x); n == length(y) || error("Length does not match");
-            μx = sum(x)/n; μy = sum(y)/n; sum((x.-μx) .* (y.-μy)) ./ (n-1))
-
-    varX  = cov(X, X)
-    varY  = cov(Y, Y)
-    covXY = cov(X, Y)
-    slope = covXY / varX
-    Rsq   = covXY^2 / (varX * varY)
-
-    @test Rsq > threshold_linearity
-
-    if order != nothing
-        @test - slope / order > threshold_slope
-    end
-
-    - slope, Rsq
-end
-
 function test_advection_convergence(Nz_min)
 
     Nh = [2*n for n=1:5]
