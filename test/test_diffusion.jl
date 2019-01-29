@@ -56,5 +56,5 @@ end
 
 test_diffusion(16)
 
-# also test the parallel version with one layer per process (not working, TODO)
+# also test the parallel version with one layer per process
 MPI.Initialized() && test_diffusion(MPI.Comm_size(MPI.COMM_WORLD))
