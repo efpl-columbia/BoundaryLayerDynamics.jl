@@ -1,6 +1,6 @@
 module ChannelFlow
 
-import LinearAlgebra, MPI, FFTW, TimerOutputs
+import LinearAlgebra, MPI, FFTW, TimerOutputs, OrdinaryDiffEq, RecursiveArrayTools
 
 export ChannelFlowProblem, closed_channel, open_channel, integrate!
 
