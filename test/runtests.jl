@@ -12,8 +12,8 @@ println("Testing ChannelFlow.jl... (serial)")
     @testset "Advection Term" begin include("advection_test.jl") end
     @testset "Diffusion Term" begin include("diffusion_test.jl") end
     @testset "Pressure Solver" begin include("pressure_solver_test.jl") end
-    @testset "Poiseuille Flow" begin include("integration_test.jl") end
     @testset "File I/O" begin include("output_test.jl") end
+    @testset "Poiseuille Flow" begin include("integration_test.jl") end
 end
 
 println("Testing ChannelFlow.jl... (parallel, n=4)")

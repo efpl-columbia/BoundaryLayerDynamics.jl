@@ -11,8 +11,8 @@ MPI.Init()
     include("advection_test.jl")
     include("diffusion_test.jl")
     include("pressure_solver_test.jl")
-    include("integration_test.jl")
     include("output_test.jl")
+    include("integration_test.jl")
 end
 
 MPI.Finalize()

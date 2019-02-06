@@ -1,17 +1,3 @@
-function mktempdir_parallel(f)
-
-    MPI.Initialized() || return mktempdir(f)
-
-    mktempdir_once(f0) = MPI.Comm_rank(MPI.COMM_WORLD) == 0 ? mktempdir(f0) : f0("")
-
-    mktempdir_once() do p
-        p = MPI.bcast(p, 0, MPI.COMM_WORLD)
-        rval = f(p)
-        MPI.Barrier(MPI.COMM_WORLD)
-        rval
-    end
-end
-
 function test_file_io(; Nx=6, Ny=8, Nz=12)
 
     Random.seed!(73330459108) # same seed for each process

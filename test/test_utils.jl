@@ -87,6 +87,17 @@ global_sum(x) = MPI.Initialized() ? MPI.Allreduce(x, +, MPI.COMM_WORLD) : x
 global_vector(x) = MPI.Initialized() ? MPI.Allgatherv(x, convert(Vector{Cint},
         MPI.Allgather(length(x), MPI.COMM_WORLD)), MPI.COMM_WORLD) : x
 
+function mktempdir_parallel(f)
+    MPI.Initialized() || return mktempdir(f)
+    mktempdir_once(f0) = MPI.Comm_rank(MPI.COMM_WORLD) == 0 ? mktempdir(f0) : f0("")
+    mktempdir_once() do p
+        p = MPI.bcast(p, 0, MPI.COMM_WORLD)
+        rval = f(p)
+        MPI.Barrier(MPI.COMM_WORLD)
+        rval
+    end
+end
+
 struct MPITestSet <: Test.AbstractTestSet
     description::AbstractString
     results::Vector

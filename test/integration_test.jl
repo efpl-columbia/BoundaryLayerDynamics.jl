@@ -19,12 +19,41 @@ Compute the maximum relative error of a Poiseuille flow at time T with Nv
 vertical grid points. The constant time step is computed such that the CFL is
 respected based on the viscous velocity ν/dz.
 """
-function poiseuille_error(T, Nt, Nv, Nh, Re)
-    uref = poiseuille(LinRange(0, 2, 2*Nv+1)[2:2:end-1], T)
+function poiseuille_error(T, Nt, Nv, Nh, Re; snapshot_steps=Int[], snapshot_dir=pwd())
+
     cf = closed_channel((Nh,Nh,Nv), Re)
-    integrate!(cf, T/Nt, Nt, verbose=false)
+    integrate!(cf, T/Nt, Nt, verbose=false, snapshot_steps=snapshot_steps,
+            snapshot_dir=snapshot_dir)
+
+    εrel(u, uref) = maximum(abs.(u .- uref) ./ uref) # max. relative error
+
+    for (i,s) in enumerate(snapshot_steps)
+        d = readdir(snapshot_dir)[i] # assumes there is nothing else in the folder
+        z, ustep = CF.read_field(joinpath(snapshot_dir, d, "u.cbd"), CF.NodeSet(:H))[4:5]
+
+        # values should be the same in horizontal direction, check minimum and
+        # maximum to make sure they are
+        u1 = global_vector(minimum(ustep, dims=(1,2))[1,1,:])
+        u2 = global_vector(maximum(ustep, dims=(1,2))[1,1,:])
+        @test u1 ≈ u2
+
+        # check that the computed solution is closer to the reference solution
+        # at the current time step than to the reference solution at the steps
+        # before and after – this should be the case even if we take quite large
+        # time steps (coarse vertical resolution)
+        tstep = T * s / Nt
+        uref_step = poiseuille(z, tstep)
+        uref_before = poiseuille(z, tstep - T / Nt)
+        uref_after  = poiseuille(z, tstep + T / Nt)
+        εstep = εrel(u1, uref_step)
+        @test uref_before < u1 < uref_after
+        @test εstep < εrel(u1, uref_before)
+        @test εstep < εrel(u1, uref_after)
+    end
+
     u = global_vector(real(cf.velocity[1][1,1,:]))
-    maximum(abs.((u .- uref) ./ uref)) # max. relative error
+    uref = poiseuille(LinRange(0, 2, 2*Nv+1)[2:2:end-1], T)
+    εrel(u, uref)
 end
 
 """
@@ -38,8 +67,14 @@ Test the integration error of a transient Poiseuille flow. The default tolerance
 is computed based on the theoretical order of convergence O(dz²) and a constant
 factor that should work for Nv≥4 based on earlier convergence tests.
 """
-test_poiseuille(Nv; Nh = 4, Re = 1.0, CFL = 0.5, T = 1/Re, tol=Nv^(-2)/4) =
-    @test poiseuille_error(T, Nt_viscous(T, 2/Nv, CFL, Re), Nv, Nh, Re) < tol
+function test_poiseuille(Nv; Nh = 4, Re = 1.0, CFL = 0.5, T = 1/Re, tol=Nv^(-2)/4)
+    Nt = Nt_viscous(T, 2/Nv, CFL, Re)
+    snapshots = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)]
+    mktempdir_parallel() do dir
+        @test poiseuille_error(T, Nt, Nv, Nh, Re, snapshot_steps=snapshots,
+                snapshot_dir=dir) < tol
+    end
+end
 
 """
 Test the order of convergence of a transient Poiseuille flow is a least O(dz²).

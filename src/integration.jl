@@ -92,22 +92,13 @@ function show_progress(p::Integer)
     println(" ", p, "%")
 end
 
-function integrate!(cf, dt, nt; verbose=true, N_output=20)
+function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[],
+                    snapshot_dir = joinpath(pwd(), "snapshots"))
 
     to = TimerOutputs.TimerOutput()
-    u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
+    oc = OutputCache(cf.grid, cf.domain_size, dt, snapshot_steps, snapshot_dir)
 
-    # set up time integration as ODE problem, excluding pressure solution
-    prob = OrdinaryDiffEq.ODEProblem(u0, (0.0, dt*nt)) do du, u, p, t
-        TimerOutputs.@timeit to "advection" set_advection!(du.x, u.x,
-            cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
-        TimerOutputs.@timeit to "diffusion" add_diffusion!(du.x, u.x,
-            cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
-        TimerOutputs.@timeit to "forcing" add_forcing!(du.x, cf.forcing)
-    end
-
-    # implement pressure solver as stage limiter for SSP stepping
-    alg = OrdinaryDiffEq.SSPRK33() do u, f, t
+    function pressure_solver!(u)
         TimerOutputs.@timeit to "pressure" begin
             solve_pressure!(cf.pressure, u.x, cf.lower_bcs, cf.upper_bcs,
                 cf.pressure_bc, cf.derivatives, cf.pressure_solver)
@@ -115,25 +106,32 @@ function integrate!(cf, dt, nt; verbose=true, N_output=20)
         end
     end
 
-    # set up function for output during simulation
-    progress = 1
-    output_times = LinRange(0, dt*nt, 1+min(N_output,nt))
-    function show_output(vel, t)
-        if t >= output_times[progress]
-            progress += 1
-            verbose && show_progress(round(Int, 100*integrator.t/(dt*nt)))
-        end
-    end
-
     # initialize integrator and perform one step to compile functions
     TimerOutputs.@timeit to "initialization" begin
-        integrator = OrdinaryDiffEq.init(prob, alg, dt = dt, save_everystep = false)
-        OrdinaryDiffEq.step!(integrator, 1e-9, true)
+
+        u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
+        pressure_solver!(u0)
+
+        # set up time integration as ODE problem, excluding pressure solution
+        prob = OrdinaryDiffEq.ODEProblem(u0, (0.0, dt*nt)) do du, u, p, t
+            TimerOutputs.@timeit to "advection" set_advection!(du.x, u.x,
+                cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
+            TimerOutputs.@timeit to "diffusion" add_diffusion!(du.x, u.x,
+                cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
+            TimerOutputs.@timeit to "forcing" add_forcing!(du.x, cf.forcing)
+        end
+
+        # apply pressure solver as stage limiter for SSP stepping
+        alg = OrdinaryDiffEq.SSPRK33((u, f, t) -> pressure_solver!(u))
+
+        integrator = OrdinaryDiffEq.init(prob, alg, dt = dt, save_start = false, save_everystep = false)
+        #log_state(integrator.u.x, integrator.t)
     end
 
     # perform the full integration
     TimerOutputs.@timeit to "time stepping" for (state, t) in OrdinaryDiffEq.tuples(integrator)
-        show_output(state.x, t)
+        # this part is run after every step (not before/during)
+        log_state!(oc, state.x, t)
     end
 
     for i=1:3

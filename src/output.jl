@@ -124,3 +124,99 @@ function shift_factors(T, nx_pd, ny_pd)
     shifty[nky+1] *= (iseven(ny_pd) ? 0 : 1)
     shiftx, shifty
 end
+
+"""
+Return a tuple with the number of digits before and after the decimal point
+needed to describe `x` in a meaningful way. This algorithm is an attempt at a
+heuristic to format decimal numbers in a useful way.
+"""
+function relevant_digits(x)
+
+    s1, s2 = split(strip(Printf.@sprintf("%.15f", x)[1:end-1], '0'), '.')
+    periodic_part = ""
+    leading_zeros = 0
+    i = 1
+    repetitions = 1
+    for c=s2
+        if isempty(periodic_part)
+            if c == '0'
+                leading_zeros += 1
+            else
+                periodic_part *= c
+            end
+        elseif periodic_part[i] == c
+            if i == length(periodic_part)
+                repetitions += 1
+                i = 1
+            else
+                i += 1
+            end
+        else # character is not matching the periodic part
+            periodic_part ^= repetitions
+            periodic_part *= periodic_part[1:i-1] * c
+            repetitions = 1
+            i = 1
+        end
+    end
+
+    Np = length(periodic_part)
+    N = leading_zeros + (repetitions == 1 ? (Np < 5 ? Np : 3) : (Np == 1 ? 2 : Np == 2 ? 4 : 3))
+    max(1, length(s1)), N
+end
+
+relevant_digits(xs::Array) = isempty(xs) ? (0,0) :
+        mapreduce(relevant_digits, (x,y) -> max.(x,y), vcat(xs, abs.(diff(xs))))
+
+function format_timestamp(timestamp, tsdigits)
+    tint = floor(Int, timestamp)
+    tdec = timestamp - tint
+    "t" * string(tint, pad=tsdigits[1]) * (tsdigits[2] == 0 ? "" : Printf.@sprintf("%.15f", tdec)[2:end-15+tsdigits[2]])
+end
+
+function format_dirname(basedir, i, timestamps, tsdigits)
+    prefix = "snapshot"
+    id = string(i-1, pad=ndigits(length(timestamps)-1))
+    timestamp = format_timestamp(timestamps[i], tsdigits)
+    dirname = join((prefix, id, timestamp), '-')
+    joinpath(basedir, dirname)
+end
+
+struct OutputCache{T}
+
+    domain_size::NTuple{3,T}
+    transform::HorizontalTransform{T}
+    shift_factors::NTuple{2,Array{Complex{T},3}}
+    snapshot_dir::String
+    snapshot_counter::Array{Int,1}
+    snapshot_timestamps::Array{T,1}
+    snapshot_tsdigits::NTuple{2,Int}
+
+    function OutputCache(gd::DistributedGrid, ds::NTuple{3,T}, dt::T,
+                         snapshot_steps::Array{Int,1}, snapshot_dir) where {T}
+        timestamps = snapshot_steps .* dt
+        new{T}(ds, HorizontalTransform(T, gd, expand=false),
+                shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd), snapshot_dir, [0],
+                timestamps, relevant_digits(timestamps))
+    end
+end
+
+function next_snapshot_time(output::OutputCache)
+    ts = output.snapshot_timestamps
+    i = output.snapshot_counter[1] + 1
+    i > length(ts) ? Inf : ts[i]
+end
+
+function write_snapshot(output::OutputCache, state, t)
+    output.snapshot_counter[1] += 1
+    output.snapshot_timestamps[output.snapshot_counter[1]] ≈ t || error("Snapshot output out of sync")
+    dir = format_dirname(output.snapshot_dir, output.snapshot_counter[1],
+                         output.snapshot_timestamps, output.snapshot_tsdigits)
+    mkpath(dir)
+    write_field(joinpath(dir, "u.cbd"), state[1], output.domain_size, output.transform, output.shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "v.cbd"), state[2], output.domain_size, output.transform, output.shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "w.cbd"), state[3], output.domain_size, output.transform, output.shift_factors, NodeSet(:V))
+end
+
+function log_state!(output::OutputCache, state, t)
+    next_snapshot_time(output) ≈ t && write_snapshot(output, state, t)
+end
