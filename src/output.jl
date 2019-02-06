@@ -86,3 +86,41 @@ function read_field(filename, nodeset::NodeSet)
         Tuple(domain_size), x, y, z, data
     end
 end
+
+function write_field(filename, field::Array{Complex{T}}, ds::NTuple{3},
+        ht::HorizontalTransform{T}, sf::NTuple{2}, ns::NodeSet;
+        shift=true, output_type=T) where {T}
+
+    buffer_fd = get_buffer_fd(ht, ns)
+    buffer_pd = get_buffer_pd(ht, ns)
+
+    if shift
+        broadcast!(*, buffer_fd, field, sf[1], sf[2])
+    else
+        buffer_fd .= field
+    end
+
+    shifth, shiftv = (shift, ns isa NodeSet{:H})
+    gs = (size(buffer_pd, 1), size(buffer_pd, 2), global_sum(size(buffer_pd, 3)) + (shiftv ? 0 : 1))
+
+    # when the indices are not shifted, the H-nodes start at zero
+    # but the V-nodes start at Δz
+    x = LinRange(0, ds[1], 2*gs[1]+1)[(shifth ? 2 : 1):2:end-1]
+    y = LinRange(0, ds[2], 2*gs[2]+1)[(shifth ? 2 : 1):2:end-1]
+    z = LinRange(0, ds[3], 2*gs[3]+1)[(shiftv ? 2 : 3):2:end-1]
+
+    LinearAlgebra.mul!(buffer_pd, get_plan_bwd(ht, ns), buffer_fd)
+    write_field(filename, buffer_pd, x, y, z, ds, output_type=output_type)
+end
+
+function shift_factors(T, nx_pd, ny_pd)
+    nkx = div(nx_pd, 2)
+    nky = div(ny_pd, 2)
+    kx = 0:nkx
+    ky = vcat(0:nky, (isodd(ny_pd) ? -nky : -nky + 1):-1)
+    shiftx = Complex{T}[exp(1im * kx * π / nx_pd) for kx=kx, ky=1:1, z=1:1]
+    shifty = Complex{T}[exp(1im * ky * π / ny_pd) for kx=1:1, ky=ky, z=1:1]
+    shiftx[nkx+1] *= (iseven(nx_pd) ? 0 : 1)
+    shifty[nky+1] *= (iseven(ny_pd) ? 0 : 1)
+    shiftx, shifty
+end

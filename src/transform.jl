@@ -161,20 +161,25 @@ struct HorizontalTransform{T<:SupportedReals}
     buffer_fd_h::Array{Complex{T},3}
     buffer_fd_v::Array{Complex{T},3}
 
-    HorizontalTransform(T, gd::DistributedGrid) = begin
+    HorizontalTransform(T, nx, ny, nz_h, nz_v) = begin
 
-        buffer_pd_h = zeros_pd(T, gd, NodeSet(:H))
-        buffer_pd_v = zeros_pd(T, gd, NodeSet(:V))
-        buffer_fd_h = zeros(Complex{T}, div(gd.nx_pd, 2) + 1, gd.ny_pd, gd.nz_h)
-        buffer_fd_v = zeros(Complex{T}, div(gd.nx_pd, 2) + 1, gd.ny_pd, gd.nz_v)
+        buffer_pd_h = zeros(T, nx, ny, nz_h)
+        buffer_pd_v = zeros(T, nx, ny, nz_v)
+        buffer_fd_h = zeros(Complex{T}, div(nx, 2) + 1, ny, nz_h)
+        buffer_fd_v = zeros(Complex{T}, div(nx, 2) + 1, ny, nz_v)
 
         new{T}(FFTW.plan_rfft(buffer_pd_h, (1,2)),
                FFTW.plan_rfft(buffer_pd_v, (1,2)),
-               FFTW.plan_brfft(buffer_fd_h, gd.nx_pd, (1,2)),
-               FFTW.plan_brfft(buffer_fd_v, gd.nx_pd, (1,2)),
+               FFTW.plan_brfft(buffer_fd_h, nx, (1,2)),
+               FFTW.plan_brfft(buffer_fd_v, nx, (1,2)),
                buffer_pd_h, buffer_pd_v, buffer_fd_h, buffer_fd_v)
     end
 end
+
+HorizontalTransform(T, gd::DistributedGrid; expand=true) = HorizontalTransform(T,
+        expand ? gd.nx_pd : 2*gd.nx_fd-1,
+        expand ? gd.ny_pd : gd.ny_fd,
+        gd.nz_h, gd.nz_v)
 
 # utility functions to select the right plans & buffers at compile time
 @inline get_plan_fwd(ht, ::NodeSet{:H}) = ht.plan_fwd_h

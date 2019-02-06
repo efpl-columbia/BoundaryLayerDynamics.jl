@@ -33,6 +33,7 @@ struct ChannelFlowProblem{P,T}
     pressure_solver::DistributedBatchLDLt{P,T,Complex{T}}
     diffusion_coeff::T
     forcing::NTuple{3,T}
+    domain_size::NTuple{3,T}
 
     ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T}, Re::T,
         open_channel::Bool, forcing::NTuple{3,T}, initial_conditions::NTuple{3,Function},
@@ -51,7 +52,7 @@ struct ChannelFlowProblem{P,T}
             gd, ht, df, AdvectionBuffers(T, gd),
             bc_noslip(T, gd), open_channel ? bc_freeslip(T, gd) : bc_noslip(T, gd),
             DirichletBC(gd, zero(T)), prepare_pressure_solver(gd, df, pressure_solver_batch_size),
-            1 / Re, forcing)
+            1 / Re, forcing, domain_size)
     end
 end
 
