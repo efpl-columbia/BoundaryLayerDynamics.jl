@@ -6,7 +6,7 @@ function global_maximum(field::Array{T}) where {T<:SupportedReals}
     MPI.Initialized() ? MPI.Allreduce(local_max, MPI.MAX, MPI.COMM_WORLD) : local_max
 end
 
-global_sum(N) = MPI.Initialized() ? MPI.Allreduce(N, MPI.SUM, MPI.COMM_WORLD) : N
+global_sum(Ns) = MPI.Initialized() ? MPI.Allreduce(sum(Ns), MPI.SUM, MPI.COMM_WORLD) : sum(Ns)
 
 function max_dt_advection(vel, grid_spacing)
     max_vel = map(global_maximum, vel)

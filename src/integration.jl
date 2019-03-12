@@ -1,7 +1,19 @@
 function add_forcing!(rhs_hat, forcing)
     @. rhs_hat[1][1,1,:] += forcing[1]
     @. rhs_hat[2][1,1,:] += forcing[2]
-    @. rhs_hat[3][1,1,:] += forcing[3]
+end
+
+function force_mean_velocity!(u_hat, u_target, nz)
+    #u_bar = real(global_sum(u_hat[1][1,1,:]) / nz)
+    #v_bar = real(global_sum(u_hat[2][1,1,:]) / nz)
+    #fx = u_target[1] - u_bar
+    #fy = u_target[2] - v_bar
+    #@. u_hat[1][1,1,:] += fx
+    #@. u_hat[2][1,1,:] += fy
+    #println("forcing x-velocity to match ", u_target[1], " (currently ", u_bar, ", adding ", fx, ")")
+    #println("forcing y-velocity to match ", u_target[2], " (currently ", v_bar, ", adding ", fy, ")")
+    u_hat[1][1,1,:] .+= u_target[1] - real(global_sum(u_hat[1][1,1,:])) / nz
+    u_hat[2][1,1,:] .+= u_target[2] - real(global_sum(u_hat[2][1,1,:])) / nz
 end
 
 init_velocity_fields(T, gd) = (zeros_fd(T, gd, NodeSet(:H)),
@@ -24,6 +36,7 @@ struct ChannelFlowProblem{P,T}
     pressure::Array{Complex{T},3}
     rhs::NTuple{3,Array{Complex{T},3}}
     grid::DistributedGrid{P}
+    domain_size::NTuple{3,T}
     transform::HorizontalTransform{T}
     derivatives::DerivativeFactors{T}
     advection_buffers::AdvectionBuffers{T}
@@ -32,11 +45,12 @@ struct ChannelFlowProblem{P,T}
     pressure_bc::DirichletBC
     pressure_solver::DistributedBatchLDLt{P,T,Complex{T}}
     diffusion_coeff::T
-    forcing::NTuple{3,T}
-    domain_size::NTuple{3,T}
+    forcing::NTuple{2,T}
+    constant_flux::Bool
 
-    ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T}, Re::T,
-        open_channel::Bool, forcing::NTuple{3,T}, initial_conditions::NTuple{3,Function},
+    ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T},
+        initial_conditions::NTuple{3,Function}, open_channel::Bool,
+        diffusion_coeff::T, forcing::NTuple{2,T}, constant_flux::Bool,
         ) where {T<:SupportedReals} = begin
 
         pressure_solver_batch_size = 64
@@ -49,19 +63,21 @@ struct ChannelFlowProblem{P,T}
             init_velocity(gd, ht, initial_conditions, domain_size),
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
-            gd, ht, df, AdvectionBuffers(T, gd),
+            gd, domain_size, ht, df, AdvectionBuffers(T, gd),
             bc_noslip(T, gd), open_channel ? bc_freeslip(T, gd) : bc_noslip(T, gd),
             DirichletBC(gd, zero(T)), prepare_pressure_solver(gd, df, pressure_solver_batch_size),
-            1 / Re, forcing, domain_size)
+            diffusion_coeff, forcing, constant_flux)
     end
 end
 
 zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
 
-open_channel(grid_size, Re, domain = (4π, 2π, 1.0), ic = zero_ics(Float64)) =
-        ChannelFlowProblem(grid_size, domain, Re, true, (1.0, 0.0, 0.0), ic)
-closed_channel(grid_size, Re, domain = (4π, 2π, 2.0), ic = zero_ics(Float64)) =
-        ChannelFlowProblem(grid_size, domain, Re, false, (1.0, 0.0, 0.0), ic)
+open_channel(grid_size, Re, domain = (4π, 2π), ic = zero_ics(Float64),
+        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
+        domain[2], 1.0), ic, true, 1 / Re, (1.0, 0.0), constant_flux)
+closed_channel(grid_size, Re, domain = (4π, 2π), ic = zero_ics(Float64),
+        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
+        domain[2], 2.0), ic, false, 1 / Re, (1.0, 0.0), constant_flux)
 
 function show_all(to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
@@ -103,6 +119,7 @@ function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[]
             solve_pressure!(cf.pressure, u.x, cf.lower_bcs, cf.upper_bcs,
                 cf.pressure_bc, cf.derivatives, cf.pressure_solver)
             subtract_pressure_gradient!(u.x, cf.pressure, cf.derivatives, cf.pressure_bc)
+            cf.constant_flux && force_mean_velocity!(u.x, cf.forcing, cf.grid.nz_global)
         end
     end
 
@@ -118,7 +135,7 @@ function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[]
                 cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
             TimerOutputs.@timeit to "diffusion" add_diffusion!(du.x, u.x,
                 cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
-            TimerOutputs.@timeit to "forcing" add_forcing!(du.x, cf.forcing)
+            cf.constant_flux || add_forcing!(du.x, cf.forcing)
         end
 
         # apply pressure solver as stage limiter for SSP stepping

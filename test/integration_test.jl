@@ -87,6 +87,43 @@ function test_poiseuille_convergence(logNv; Nh = 4, Re = 1.0, CFL = 0.5, T = 1/R
     test_convergence(Nv, ε, order=2)
 end
 
+function test_constant_flux_poiseuille(nz)
+
+    z = LinRange(0, 2, 2*nz+1)[2:2:end]
+    u_exact = poiseuille(z, Inf)
+    mf = sum(u_exact) / nz
+
+    # total integration to t=1 in `nit` iteration steps
+    CFL, ν, tend, nit = (1/4, 1.0, 1.0, 8)
+    dtmax = (2 / nz)^2 / ν * CFL
+    nt = ceil(Int, tend / dtmax / nit) # steps per iteration
+    dt = tend / (nit * nt)
+
+    ε_constant_force = zeros(nit)
+    ε_constant_flux  = zeros(nit)
+    ε(cf) = CF.global_sum(abs.(cf.velocity[1][1,1,:] .- u_exact[cf.grid.iz_min:cf.grid.iz_max])) / nz
+
+    # compute errors for constant forcing first
+    cf1 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64), false, 1.0, (1.0, 0.0), false)
+    for i=1:nit
+        integrate!(cf1, dt, nt, verbose=false)
+        ε_constant_force[i] = ε(cf1)
+    end
+
+    # compute errors for constant flux next
+    cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64), false, 1.0, (mf, 0.0), true)
+    for i=1:nit
+        integrate!(cf2, dt, nt, verbose=false)
+        ε_constant_flux[i] = ε(cf2)
+    end
+
+    # test that difference to steady-state solution is smaller than
+    # for constant forcing and that it is monotonically decreasing
+    @test all(ε_constant_flux .< ε_constant_force)
+    @test all(diff(ε_constant_flux) .< 0)
+    @test ε_constant_flux[end] < 1e-6 # should be the case for nz≥4
+end
+
 # test the correct integration of a poiseuille flow at t=1 for Nz=16
 # (also test the parallel version with one layer per process)
 test_poiseuille(16)
@@ -94,3 +131,7 @@ MPI.Initialized() && test_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
 
 # test order of convergence for Nz=16,32,64,128,256 is at least 2
 test_poiseuille_convergence(4:8, T=0.01)
+
+# test that a poiseuille flow driven by a constant flux converges faster
+test_constant_flux_poiseuille(16)
+MPI.Initialized() && test_constant_flux_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
