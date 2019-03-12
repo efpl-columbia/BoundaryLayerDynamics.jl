@@ -8,6 +8,7 @@ function test_file_io(; Nx=6, Ny=8, Nz=12)
 
             ds = (rand(T), rand(T), rand(T))
             vel0(x, y, z) = x / ds[1] + y / ds[2] + z / ds[3]
+            dmin, dmax = (zero(T), zero(T), zero(T)), ds
 
             gd = CF.DistributedGrid(Nx, Ny, Nz)
             gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
@@ -26,10 +27,11 @@ function test_file_io(; Nx=6, Ny=8, Nz=12)
             for T_files=(Float32, Float64)
 
                 fn = joinpath(p, string("vel-", T_files, "-from-", T, "-", ns, ".bin"))
-                CF.write_field(fn, vel_pd, x, y, z, ds, output_type = T_files)
-                domain_after, x_after, y_after, z_after, vel_after = CF.read_field(fn, CF.NodeSet(ns))
+                CF.write_field(T_files, fn, vel_pd, x, y, z, dmin, dmax)
+                dmin_after, dmax_after, x_after, y_after, z_after, vel_after = CF.read_field(fn, CF.NodeSet(ns))
 
-                @test domain_after == ds
+                @test dmin_after == dmin
+                @test dmax_after == dmax
                 @test x_after == x
                 @test y_after == y
                 @test z_after == z
@@ -64,6 +66,7 @@ function test_shifted_file_output(T=Float64; Nx=6, Ny=8, Nz=12)
                          + C0 ) * z * (1-z)
 
     ds = convert.(T, (2π, 2π, 1))
+    dmin, dmax = (zero(T), zero(T), zero(T)), ds
     gd = CF.DistributedGrid(Nx, Ny, Nz)
     gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
     df = CF.DerivativeFactors(gd, ds)
@@ -81,13 +84,14 @@ function test_shifted_file_output(T=Float64; Nx=6, Ny=8, Nz=12)
         ns = CF.NodeSet(NS)
         vel_fd = CF.set_field(gd, ht, vel0, gs, ns)
 
-        ds_file, x_file, y_file, z_file, data_file = mktempdir_parallel() do p
+        dmin_file, dmax_file, x_file, y_file, z_file, data_file = mktempdir_parallel() do p
             fn = joinpath(p, "vel.cbd")
             CF.write_field(fn, vel_fd, ds, ht_file, sf_file, ns)
             CF.read_field(fn, ns)
         end
 
-        @test collect(ds_file) ≈ collect(ds)
+        @test collect(dmin_file) ≈ collect(dmin)
+        @test collect(dmax_file) ≈ collect(dmax)
         @test x_file ≈ LinRange(0, ds[1], 2*nx_file+1)[2:2:end]
         @test y_file ≈ LinRange(0, ds[2], 2*ny_file+1)[2:2:end]
         @test z_file ≈ LinRange(0, ds[3], 2*Nz+1)[(NS == :H ? 2 : 3):2:end-1]

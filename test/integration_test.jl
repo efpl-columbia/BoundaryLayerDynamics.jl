@@ -29,7 +29,7 @@ function poiseuille_error(T, Nt, Nv, Nh, Re; snapshot_steps=Int[], snapshot_dir=
 
     for (i,s) in enumerate(snapshot_steps)
         d = readdir(snapshot_dir)[i] # assumes there is nothing else in the folder
-        z, ustep = CF.read_field(joinpath(snapshot_dir, d, "u.cbd"), CF.NodeSet(:H))[4:5]
+        z, ustep = CF.read_field(joinpath(snapshot_dir, d, "u.cbd"), CF.NodeSet(:H))[5:6]
 
         # values should be the same in horizontal direction, check minimum and
         # maximum to make sure they are

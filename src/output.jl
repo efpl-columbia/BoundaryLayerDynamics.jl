@@ -1,3 +1,6 @@
+const CBD_MAGIC_NUMBER = hex2bytes("CBDF")
+const CBD_VERSION = 1
+
 max_dt_diffusion(coeff, dx, dy, dz) = min(dx, dy, dz)^2 / coeff
 
 function global_maximum(field::Array{T}) where {T<:SupportedReals}
@@ -25,11 +28,16 @@ function sequential_open(f, filename, mode)
     r
 end
 
-function write_field(filename, field, x, y, z, domain_size::NTuple{3}; output_type=eltype(field))
+write_field(filename, field::Array{T}, x, y, z, domain_min, domain_max) where T =
+    write_field(eltype(field), filename, field, x, y, z, domain_min, domain_max)
 
-    # build first UInt64 value, describing the version of the file format that is used
-    magic_number = 0xFFFFFFFF00000000 # TODO: define a good magic number
-    precision = output_type == Float64 ? 64 : output_type == Float32 ? 32 :
+function write_field(T, filename, field, x, y, z, domain_min, domain_max)
+
+    # build first value, describing the version of the file format that is used
+    identifier = zeros(UInt8, 8)
+    identifier[1:2] = CBD_MAGIC_NUMBER
+    identifier[3]   = CBD_VERSION
+    identifier[end] = T == Float64 ? 0x8 : T == Float32 ? 0x4 :
             error("Only 64-bit and 32-bit precision is supported.")
 
     # make sure the dimensions are compatible
@@ -41,33 +49,38 @@ function write_field(filename, field, x, y, z, domain_size::NTuple{3}; output_ty
 
     sequential_open(filename, "a") do f
         if proc_id()[1] == 1
-            write(f, magic_number | precision)
+            write(f, identifier)
             write(f, collect(UInt64, (Nx, Ny, Nz)))
-            write(f, collect(Float64, domain_size))
-            write(f, convert.(Float64, x))
-            write(f, convert.(Float64, y))
-            write(f, convert.(Float64, z))
+            write(f, collect(Float64, domain_min))
+            write(f, collect(Float64, domain_max))
+            write(f, convert(Array{Float64}, x))
+            write(f, convert(Array{Float64}, y))
+            write(f, convert(Array{Float64}, z))
         end
-        write(f, convert.(output_type, field))
+        write(f, convert(Array{T}, field))
     end
 end
 
 function read_field(filename, nodeset::NodeSet)
 
-    magic_number = 0xFFFFFFFF00000000 # TODO: define a good magic number
     grid_points = zeros(UInt64, 3)
-    domain_size = zeros(Float64, 3)
+    domain_min = zeros(Float64, 3)
+    domain_max = zeros(Float64, 3)
 
     sequential_open(filename, "r") do f
 
-        # parse first values specifying data format
-        identifier = read(f, UInt64)
-        identifier & 0xFFFFFFFF00000000 == magic_number || error("Invalid file format")
-        variant = identifier & 0x00000000FFFFFFFF
-        T = variant == 64 ? Float64 : variant == 32 ? Float32 : error("Invalid data format")
+        # parse identifier and select precision
+        identifier = read!(f, zeros(UInt8, 8))
+        identifier[1:2] == CBD_MAGIC_NUMBER ||
+            @error "Not a CBD file (magic number not matching)." identifier[1:2]
+        identifier[3] == CBD_VERSION ||
+            @error "Unsupported version of CBD format." identifier[3]
+        T = identifier[end] == 0x4 ? Float32 : identifier[end] == 0x8 ? Float64 :
+            @error "Unsupported data type: Only 32-bit and 64-bit precision is supported."
 
         read!(f, grid_points)
-        read!(f, domain_size)
+        read!(f, domain_min)
+        read!(f, domain_max)
 
         x = zeros(Float64, grid_points[1])
         y = zeros(Float64, grid_points[2])
@@ -83,7 +96,7 @@ function read_field(filename, nodeset::NodeSet)
         skip(f, grid_points[1] * grid_points[2] * (iz_min-1) * bytes_per_value)
         read!(f, data)
 
-        Tuple(domain_size), x, y, z, data
+        Tuple(domain_min), Tuple(domain_max), x, y, z, data
     end
 end
 
@@ -110,7 +123,8 @@ function write_field(filename, field::Array{Complex{T}}, ds::NTuple{3},
     z = LinRange(0, ds[3], 2*gs[3]+1)[(shiftv ? 2 : 3):2:end-1]
 
     LinearAlgebra.mul!(buffer_pd, get_plan_bwd(ht, ns), buffer_fd)
-    write_field(filename, buffer_pd, x, y, z, ds, output_type=output_type)
+    write_field(output_type, filename, buffer_pd, x, y, z,
+                (zero(T), zero(T), zero(T)), ds)
 end
 
 function shift_factors(T, nx_pd, ny_pd)
@@ -206,15 +220,19 @@ function next_snapshot_time(output::OutputCache)
     i > length(ts) ? Inf : ts[i]
 end
 
+function write_state(dir, state, domain_size, transform, shift_factors)
+    mkpath(dir)
+    write_field(joinpath(dir, "u.cbd"), state[1], domain_size, transform, shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "v.cbd"), state[2], domain_size, transform, shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "w.cbd"), state[3], domain_size, transform, shift_factors, NodeSet(:V))
+end
+
 function write_snapshot(output::OutputCache, state, t)
     output.snapshot_counter[1] += 1
     output.snapshot_timestamps[output.snapshot_counter[1]] ≈ t || error("Snapshot output out of sync")
     dir = format_dirname(output.snapshot_dir, output.snapshot_counter[1],
                          output.snapshot_timestamps, output.snapshot_tsdigits)
-    mkpath(dir)
-    write_field(joinpath(dir, "u.cbd"), state[1], output.domain_size, output.transform, output.shift_factors, NodeSet(:H))
-    write_field(joinpath(dir, "v.cbd"), state[2], output.domain_size, output.transform, output.shift_factors, NodeSet(:H))
-    write_field(joinpath(dir, "w.cbd"), state[3], output.domain_size, output.transform, output.shift_factors, NodeSet(:V))
+    write_state(dir, state, output.domain_size, output.transform, output.shift_factors)
 end
 
 function log_state!(output::OutputCache, state, t)
