@@ -22,6 +22,16 @@ proc(i, n) = (i,n) == (1,1) ? SingleProc() : i == 1 ? MinProc() :
 proc_type(p::P) where {P<:ProcType} = P
 proc_type() = proc_type(proc(proc_id()...))
 
+global_maximum(val::T) where {T<:Real} =
+        MPI.Initialized() ? MPI.Allreduce(val, MPI.MAX, MPI.COMM_WORLD) : val
+
+function global_maximum(field::Array{T}) where {T<:SupportedReals}
+    # specifying T avoids accidentially taking the maximum in Fourier space
+    global_maximum(mapreduce(abs, max, field))
+end
+
+global_sum(Ns) = MPI.Initialized() ? MPI.Allreduce(sum(Ns), MPI.SUM, MPI.COMM_WORLD) : sum(Ns)
+
 struct DistributedGrid{P<:ProcType}
     nx_fd::Int
     nx_pd::Int

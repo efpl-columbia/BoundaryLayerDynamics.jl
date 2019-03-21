@@ -145,6 +145,10 @@ end
 layers(field::Array{T,3}) where T =
         Tuple(view(field, :, :, iz) for iz=1:size(field,3))
 
+# compute diffusive time scale based on vertical grid spacing
+diffusive_timescale(diffusion_coeff, df::DerivativeFactors) =
+        (1 / df.dz1)^2 / diffusion_coeff
+
 add_diffusion!(rhs::Array, field::Array, lower_bc::BoundaryCondition,
         upper_bc::BoundaryCondition, coeff::T, df::DerivativeFactors{T},
         nodes::NodeSet) where T = add_diffusion!(layers(rhs), layers(field),
@@ -156,4 +160,4 @@ add_diffusion!(rhs::NTuple{3,Array}, fields::NTuple{3,Array},
         add_diffusion!(rhs[1], fields[1], lower_bcs[1], upper_bcs[1], coeff, df, NodeSet(:H));
         add_diffusion!(rhs[2], fields[2], lower_bcs[2], upper_bcs[2], coeff, df, NodeSet(:H));
         add_diffusion!(rhs[3], fields[3], lower_bcs[3], upper_bcs[3], coeff, df, NodeSet(:V));
-        rhs)
+        (rhs, diffusive_timescale(coeff, df)))

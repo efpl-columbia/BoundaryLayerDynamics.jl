@@ -32,7 +32,7 @@ function test_advection_exact(NZ)
     rhs = (CF.zeros_fd(T, gd, CF.NodeSet(:H)),
            CF.zeros_fd(T, gd, CF.NodeSet(:H)),
            CF.zeros_fd(T, gd, CF.NodeSet(:V)))
-    b = CF.AdvectionBuffers(T, gd)
+    b = CF.AdvectionBuffers(T, gd, ds)
     advh = CF.zeros_fd(T, gd, CF.NodeSet(:H))
     advv = CF.zeros_fd(T, gd, CF.NodeSet(:V))
     u, v, w = vel
@@ -169,7 +169,7 @@ function advection_error_convergence(Nh, Nv)
         ht = CF.HorizontalTransform(T, gd)
         gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
         df = CF.DerivativeFactors(gd, ds)
-        ab = CF.AdvectionBuffers(T, gd)
+        ab = CF.AdvectionBuffers(T, gd, ds)
 
         lbcs = CF.bc_noslip(T, gd)
         ubcs = CF.bc_noslip(T, gd)

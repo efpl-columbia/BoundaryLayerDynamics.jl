@@ -145,8 +145,9 @@ struct AdvectionBuffers{T}
     advu_pd::Array{T,3}
     advv_pd::Array{T,3}
     advw_pd::Array{T,3}
+    grid_spacing::Tuple{T,T,T}
 
-    AdvectionBuffers(T, gd::DistributedGrid) =
+    AdvectionBuffers(T, gd::DistributedGrid, domain_size) =
         new{T}(
             # rot_fd
             zeros_fd(T, gd, NodeSet(:V)),
@@ -167,7 +168,24 @@ struct AdvectionBuffers{T}
             zeros_pd(T, gd, NodeSet(:H)),
             zeros_pd(T, gd, NodeSet(:H)),
             zeros_pd(T, gd, NodeSet(:V)),
+
+            # grid_spacing
+            domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
         )
+end
+
+function advective_timescale(vel_layers, grid_spacing::NTuple{3,T}) where {T}
+
+    # compute maximum velocity per layer (for CFL condition)
+    umax_layer, vmax_layer, wmax_layer = (map(l -> mapreduce(abs, max, l), vel) for vel = vel_layers)
+
+    # compute global maxima of u_i
+    umax = global_maximum(reduce(max, umax_layer, init = zero(T)))
+    vmax = global_maximum(reduce(max, vmax_layer, init = zero(T)))
+    wmax = global_maximum(reduce(max, wmax_layer, init = zero(T)))
+
+    # compute advective time scales
+    grid_spacing ./ (umax, vmax, wmax)
 end
 
 function set_advection!(rhs, vel, df::DerivativeFactors, ht::HorizontalTransform,
@@ -198,10 +216,13 @@ function set_advection!(rhs, vel, df::DerivativeFactors, ht::HorizontalTransform
     advv!(layers(b.advv_pd), upd, rupd, wpd, rwpd, lbcv, ubcv, lbcw, ubcw)
     advw!(layers(b.advw_pd), upd, rupd, vpd, rvpd, ubcu, ubcv)
 
+    # compute smallest time scale for advection term (for CFL condition)
+    dt_adv = advective_timescale((upd, vpd, wpd), b.grid_spacing)
+
     # transform advection term to frequency domain (overwriting rhs)
     set_field!(rhs[1], ht, b.advu_pd, NodeSet(:H))
     set_field!(rhs[2], ht, b.advv_pd, NodeSet(:H))
     set_field!(rhs[3], ht, b.advw_pd, NodeSet(:V))
 
-    rhs
+    rhs, dt_adv
 end

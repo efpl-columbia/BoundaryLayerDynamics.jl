@@ -63,7 +63,7 @@ struct ChannelFlowProblem{P,T}
             init_velocity(gd, ht, initial_conditions, domain_size),
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
-            gd, domain_size, ht, df, AdvectionBuffers(T, gd),
+            gd, domain_size, ht, df, AdvectionBuffers(T, gd, domain_size),
             bc_noslip(T, gd), open_channel ? bc_freeslip(T, gd) : bc_noslip(T, gd),
             DirichletBC(gd, zero(T)), prepare_pressure_solver(gd, df, pressure_solver_batch_size),
             diffusion_coeff, forcing, constant_flux)
@@ -72,10 +72,10 @@ end
 
 zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
 
-open_channel(grid_size, Re, domain = (4π, 2π), ic = zero_ics(Float64),
+open_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
         constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
         domain[2], 1.0), ic, true, 1 / Re, (1.0, 0.0), constant_flux)
-closed_channel(grid_size, Re, domain = (4π, 2π), ic = zero_ics(Float64),
+closed_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
         constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
         domain[2], 2.0), ic, false, 1 / Re, (1.0, 0.0), constant_flux)
 
@@ -97,22 +97,30 @@ function show_all(to::TimerOutputs.TimerOutput)
     end
 end
 
-function show_progress(p::Integer)
-    0 <= p <= 100 || error("Progress has to be a percentage.")
-    print("│")
-    print(repeat("█", div(p,4)))
-    #mod(p,4) == 3 ? print("▓") : mod(p,4) == 2 ? print("▒") : mod(p,4) == 1 ? print("░") : nothing
-    mod(p,4) == 3 ? print("▊") : mod(p,4) == 2 ? print("▌") : mod(p,4) == 1 ? print("▎") : nothing
-    print(repeat(" ", div(100-p,4)))
-    print("│")
-    println(" ", p, "%")
+function add_noise!(cf::ChannelFlowProblem{P,T}, intensity::T = one(T) / 4) where {P,T}
+    for v=1:3
+        vel = cf.velocity[v]
+        for k=1:size(vel, 3)
+            σ = real(vel[1,1,k]) * intensity
+            for j=1:size(vel, 2), i=1:size(vel, 1)
+                if !(i == j == 1) # do not modify mean flow
+                    vel[i,j,k] += σ * randn(Complex{T})
+                end
+            end
+        end
+    end
 end
 
-function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[],
-                    snapshot_dir = joinpath(pwd(), "snapshots"))
+function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
+        snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
+        output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
+        verbose=true) where {P,T}
 
     to = TimerOutputs.TimerOutput()
-    oc = OutputCache(cf.grid, cf.domain_size, dt, snapshot_steps, snapshot_dir)
+    oc = OutputCache(cf.grid, cf.domain_size, dt, nt, cf.lower_bcs, cf.upper_bcs,
+            cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_io, output_frequency)
+    dt_adv = (zero(T), zero(T), zero(T))
+    dt_dif = zero(T)
 
     function pressure_solver!(u)
         TimerOutputs.@timeit to "pressure" begin
@@ -131,9 +139,9 @@ function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[]
 
         # set up time integration as ODE problem, excluding pressure solution
         prob = OrdinaryDiffEq.ODEProblem(u0, (0.0, dt*nt)) do du, u, p, t
-            TimerOutputs.@timeit to "advection" set_advection!(du.x, u.x,
+            TimerOutputs.@timeit to "advection" _, dt_adv = set_advection!(du.x, u.x,
                 cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
-            TimerOutputs.@timeit to "diffusion" add_diffusion!(du.x, u.x,
+            TimerOutputs.@timeit to "diffusion" _, dt_dif = add_diffusion!(du.x, u.x,
                 cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
             cf.constant_flux || add_forcing!(du.x, cf.forcing)
         end
@@ -148,7 +156,7 @@ function integrate!(cf, dt, nt; verbose=true, snapshot_steps::Array{Int,1}=Int[]
     # perform the full integration
     TimerOutputs.@timeit to "time stepping" for (state, t) in OrdinaryDiffEq.tuples(integrator)
         # this part is run after every step (not before/during)
-        log_state!(oc, state.x, t)
+        TimerOutputs.@timeit to "output" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
     end
 
     for i=1:3
