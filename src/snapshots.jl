@@ -112,6 +112,7 @@ function write_field(filename, field::Array{Complex{T}}, ds::NTuple{3},
                 (zero(T), zero(T), zero(T)), ds)
 end
 
+# TODO: change this to a function that shifts/unshifts a field in-place
 function shift_factors(T, nx_pd, ny_pd)
     nkx = div(nx_pd, 2)
     nky = div(ny_pd, 2)
@@ -200,3 +201,38 @@ function write_snapshot(output::OutputCache, state, t)
                          output.snapshot_timestamps, output.snapshot_tsdigits)
     write_state(dir, state, output.domain_size, output.transform, output.shift_factors)
 end
+
+# TODO: combine this with set_field! for the extended array, just specifying
+# the shift factor and making sure there are no issues with differently sized
+# field_pd arrays
+function read_field!(field_fd::AbstractArray{Complex{T},3}, filename::String,
+        gd::DistributedGrid, ht::HorizontalTransform, sf::NTuple{2},
+        ds::Tuple{T,T,T}, ns::NodeSet) where T
+
+    xmin, xmax, x1, x2, x3, field_pd = read_field(filename, ns)
+
+    # check that all data is as expected
+    n = (2*gd.nx_fd-1, gd.ny_fd, gd.nz_global)
+    @assert all(xmin .≈ (zero(T), zero(T), zero(T)))
+    @assert all(xmax .≈ ds)
+    @assert x1 ≈ LinRange(0, ds[1], 2 * n[1] + 1)[2:2:end]
+    @assert x2 ≈ LinRange(0, ds[2], 2 * n[2] + 1)[2:2:end]
+    @assert x3 ≈ LinRange(0, ds[3], 2 * n[3] + 1)[(ns isa NodeSet{:V} ?
+        (3:2:end-1) : (2:2:end))]
+
+    LinearAlgebra.mul!(field_fd, get_plan_fwd(ht, ns), field_pd)
+    broadcast!((û, s1, s2) -> û / (n[1] * n[2] * s1 * s2), field_fd, field_fd, sf[1], sf[2])
+    field_fd
+end
+
+function read_snapshot!(vel, dir, gd::DistributedGrid, ds::Tuple{T,T,T}) where T
+    fn = joinpath.(dir, ("u.cbd", "v.cbd", "w.cbd"))
+    ns = (NodeSet(:H), NodeSet(:H), NodeSet(:V))
+    ht = HorizontalTransform(T, gd, expand=false)
+    sf = shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd)
+    Tuple(read_field!(vel[i], fn[i], gd, ht, sf, ds, ns[i]) for i=1:3)
+end
+
+read_snapshot(dir, gd, domain_size::Tuple{T,T,T}) where T = read_snapshot!(
+        (zeros_fd(T, gd, NodeSet(:H)), zeros_fd(T, gd, NodeSet(:H)),
+        zeros_fd(T, gd, NodeSet(:V))), gd, domain_size)

@@ -111,6 +111,9 @@ function add_noise!(cf::ChannelFlowProblem{P,T}, intensity::T = one(T) / 8) wher
     end
 end
 
+load_snapshot!(cf::ChannelFlowProblem, snapshot_dir) =
+    read_snapshot!(cf.velocity, snapshot_dir, cf.grid, cf.domain_size)
+
 function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
         output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
