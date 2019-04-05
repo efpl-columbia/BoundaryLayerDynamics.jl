@@ -97,7 +97,7 @@ function show_all(to::TimerOutputs.TimerOutput)
     end
 end
 
-function add_noise!(cf::ChannelFlowProblem{P,T}, intensity::T = one(T) / 4) where {P,T}
+function add_noise!(cf::ChannelFlowProblem{P,T}, intensity::T = one(T) / 8) where {P,T}
     for v=1:3
         vel = cf.velocity[v]
         for k=1:size(vel, 3)
@@ -150,7 +150,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         alg = OrdinaryDiffEq.SSPRK33((u, f, t) -> pressure_solver!(u))
 
         integrator = OrdinaryDiffEq.init(prob, alg, dt = dt, save_start = false, save_everystep = false)
-        #log_state(integrator.u.x, integrator.t)
+        TimerOutputs.@timeit to "output" log_state!(oc, integrator.u.x, integrator.t, (dt, dt_adv, dt_dif), verbose)
     end
 
     # perform the full integration

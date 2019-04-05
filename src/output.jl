@@ -219,7 +219,7 @@ struct OutputCache{T,NP}
                          snapshot_steps::Array{Int,1}, snapshot_dir,
                          output_io, output_frequency) where {T}
         timestamps = snapshot_steps .* dt
-        halflives = (10, 100)
+        halflives = (10, 100, 1000)
         hlfactors = Tuple(2^(-1/hl) for hl=halflives)
         vel, mke, tke = (Tuple(zeros(T, nz, length(halflives) + 1)
                                for nz in (gd.nz_h, gd.nz_h, gd.nz_v)) for i=1:3)
@@ -319,7 +319,7 @@ function wallstress(profiles::Array{T,2}, bc, indices, factors) where {T}
         end
     end
     if MPI.Initialized()
-        MPI.Allreduce!(velocities, MPI.SUM, MPI.COMM_WORLD)
+        velocities = MPI.Allreduce!(velocities, zero(velocities), MPI.SUM, MPI.COMM_WORLD)
     end
 
     # compute wall stress with precomputed finite difference factors
@@ -328,15 +328,14 @@ function wallstress(profiles::Array{T,2}, bc, indices, factors) where {T}
             factors[3] * velocities[2,i] for i = 1:size(velocities, 2)]
 end
 
-function show_progress(io::IO, p::Integer)
+function progressbar(p::Integer)
     0 <= p <= 100 || error("Progress has to be a percentage.")
-    print("│")
-    print(repeat("█", div(p,4)))
-    #mod(p,4) == 3 ? print("▓") : mod(p,4) == 2 ? print("▒") : mod(p,4) == 1 ? print("░") : nothing
-    mod(p,4) == 3 ? print("▊") : mod(p,4) == 2 ? print("▌") : mod(p,4) == 1 ? print("▎") : nothing
-    print(repeat(" ", div(100-p,4)))
-    print("│")
-    println(" ", p, "%")
+    "│" *
+    repeat('█', div(p, 4)) *
+    (mod(p,4) == 3 ? "▊" : mod(p,4) == 2 ? "▌" : mod(p,4) == 1 ? "▎" : "") *
+    repeat(' ', div(100 - p, 4)) *
+    "│" *
+    " " * string(p) * "%"
 end
 
 map_to_string(f, vals) = join((Printf.@sprintf("% .2e", f(x)) for x=vals), " ")
@@ -346,7 +345,7 @@ function summary_profile(profiles)
     sum_local = zeros(size(profiles,2) + 1)
     sum_local[1:end-1] .= sum(profiles, dims=1)[:]
     sum_local[end] = size(profiles, 1)
-    sum_global = MPI.Initialized() ? MPI.Allreduce(sum_local, MPI.SUM, MPI.COMM_WORLD) : sum_local
+    sum_global = MPI.Initialized() ? MPI.Allreduce!(sum_local, zero(sum_local), MPI.SUM, MPI.COMM_WORLD) : sum_local
     map_to_string(x -> x/sum_global[end], sum_global[1:end-1])
 end
 
@@ -355,21 +354,27 @@ function summary_friction_velocity(output, i)
     map_to_string(x -> sqrt(abs(x)), ws)
 end
 
+function print_once(io::IO, args...)
+    if (!MPI.Initialized() || MPI.Comm_rank(MPI.COMM_WORLD) == 0)
+        println(io, args...)
+    end
+end
+
 function print_diagnostics(io::IO, output::OutputCache, t)
-    println(io, "Simulation status after ", output.diagnostics_counter[], " steps:")
-    println(io, " • Bulk Velocity:               ", summary_profile(output.profiles_vel[1]))
-    println(io, " • Mean Kinetic Energy:         ", summary_profile(output.profiles_mke[1]))
-    println(io, " • Turbulent Kinetic Energy:    ", summary_profile(output.profiles_tke[1]))
-    println(io, " • Friction Velocity Below (U): ", summary_friction_velocity(output, 1))
-    #println(io, " • Friction Velocity Below (V): ", summary_friction_velocity(output, 2))
-    println(io, " • Friction Velocity Above (U): ", summary_friction_velocity(output, 3))
-    #println(io, " • Friction Velocity Above (V): ", summary_friction_velocity(output, 4))
-    println(io, " • Advective Courant Number U:  ", map_to_string(output.courant[1:3:end-1]))
-    println(io, " • Advective Courant Number V:  ", map_to_string(output.courant[2:3:end-1]))
-    println(io, " • Advective Courant Number W:  ", map_to_string(output.courant[3:3:end-1]))
-    println(io, " • Advective Courant Number:    ", map_to_string(sum(output.courant[i:i+2]) for i=1:3:length(output.courant)-1))
-    println(io, " • Diffusive Courant Number:    ", map_to_string(output.courant[end:end]))
-    show_progress(io, round(Int, 100 * t / output.integration_time))
+    print_once(io, "Simulation status after ", output.diagnostics_counter[], " steps:")
+    print_once(io, " • Bulk Velocity:               ", summary_profile(output.profiles_vel[1]))
+    print_once(io, " • Mean Kinetic Energy:         ", summary_profile(output.profiles_mke[1]))
+    print_once(io, " • Turbulent Kinetic Energy:    ", summary_profile(output.profiles_tke[1]))
+    print_once(io, " • Friction Velocity Below (U): ", summary_friction_velocity(output, 1))
+   #print_once(io, " • Friction Velocity Below (V): ", summary_friction_velocity(output, 2))
+    print_once(io, " • Friction Velocity Above (U): ", summary_friction_velocity(output, 3))
+   #print_once(io, " • Friction Velocity Above (V): ", summary_friction_velocity(output, 4))
+    print_once(io, " • Advective Courant Number U:  ", map_to_string(output.courant[1:3:end-1]))
+    print_once(io, " • Advective Courant Number V:  ", map_to_string(output.courant[2:3:end-1]))
+    print_once(io, " • Advective Courant Number W:  ", map_to_string(output.courant[3:3:end-1]))
+    print_once(io, " • Advective Courant Number:    ", map_to_string(sum(output.courant[i:i+2]) for i=1:3:length(output.courant)-1))
+    print_once(io, " • Diffusive Courant Number:    ", map_to_string(output.courant[end:end]))
+    print_once(io, progressbar(round(Int, 100 * t / output.integration_time)))
     flush(io)
 end
 
@@ -390,16 +395,16 @@ function log_state!(output::OutputCache, state, t, dts, show_diagnostics = true)
     update_timescales!(output, dts)
 
     # print diagnostic output
-    output.diagnostics_counter[] += 1
     if output.diagnostics_counter[] % output.diagnostics_frequency == 0
         show_diagnostics && print_diagnostics(output.diagnostics_io, output, t)
     end
+    output.diagnostics_counter[] += 1
 
     # write snapshot files
     if next_snapshot_time(output) ≈ t
         write_snapshot(output, state, t)
         if show_diagnostics
-            println(output.diagnostics_io, "Wrote snapshot at t=", t)
+            print_once(output.diagnostics_io, "Wrote snapshot at t=", t)
             flush(output.diagnostics_io)
         end
     end
