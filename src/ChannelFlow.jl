@@ -10,6 +10,7 @@ include("advection.jl")
 include("diffusion.jl")
 include("pressure_solver.jl")
 include("output.jl")
+include("snapshots.jl")
 include("integration.jl")
 
 end # module
