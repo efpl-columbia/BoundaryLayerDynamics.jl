@@ -124,6 +124,28 @@ function test_constant_flux_poiseuille(nz)
     @test ε_constant_flux[end] < 1e-6 # should be the case for nz≥4
 end
 
+"""
+Test that a standard channel flow with output can be run, including output,
+without producing an error.
+"""
+function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
+    cf = closed_channel((Nh,Nh,Nv), Re, constant_flux = true)
+    dt = (2/Nv)^2 * Re * CFL
+    io = IOBuffer()
+
+    mktempdir_parallel() do dir
+        integrate!(cf, dt, Nt, output_io = IOBuffer(),
+            profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
+            snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
+            snapshot_dir = joinpath(dir, "snapshots"), verbose = true)
+
+        # attempt setting the velocity from the latest snapshot
+        last_snapshot = readdir(joinpath(dir, "snapshots"))[end]
+        CF.load_snapshot!(cf, joinpath(dir, "snapshots", last_snapshot))
+    end
+end
+
+
 # test the correct integration of a poiseuille flow at t=1 for Nz=16
 # (also test the parallel version with one layer per process)
 test_poiseuille(16)
@@ -135,3 +157,7 @@ test_poiseuille_convergence(4:8, T=0.01)
 # test that a poiseuille flow driven by a constant flux converges faster
 test_constant_flux_poiseuille(16)
 MPI.Initialized() && test_constant_flux_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
+
+# test that a channel flow with output runs without error
+test_channel(16)
+MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))

@@ -79,21 +79,21 @@ closed_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
         constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
         domain[2], 2.0), ic, false, 1 / Re, (1.0, 0.0), constant_flux)
 
-function show_all(to::TimerOutputs.TimerOutput)
+function show_all(io::IO, to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
         r = MPI.Comm_rank(MPI.COMM_WORLD)
         s = MPI.Comm_size(MPI.COMM_WORLD)
         for i=1:s
             if i==r+1
-                println("Timing of process ", i, ":")
-                show(to)
-                println() # newline is missing in show(to)
+                println(io, "Timing of process ", i, ":")
+                show(io, to)
+                println(io) # newline is missing in show(to)
             end
             MPI.Barrier(MPI.COMM_WORLD)
         end
     else
-        show(to)
-        println() # newline is missing in show(to)
+        show(io, to)
+        println(io) # newline is missing in show(to)
     end
 end
 
@@ -171,6 +171,6 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     for i=1:3
         cf.velocity[i] .= integrator.sol[end].x[i]
     end
-    verbose && show_all(to)
+    verbose && show_all(oc.diagnostics_io, to)
     integrator.sol
 end
