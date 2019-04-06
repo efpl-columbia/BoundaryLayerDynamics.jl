@@ -117,11 +117,14 @@ load_snapshot!(cf::ChannelFlowProblem, snapshot_dir) =
 function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
         output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
+        profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
         verbose=true) where {P,T}
 
     to = TimerOutputs.TimerOutput()
     oc = OutputCache(cf.grid, cf.domain_size, dt, nt, cf.lower_bcs, cf.upper_bcs,
             cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_io, output_frequency)
+    pp = MeanProfiles(T, cf.grid, profiles_dir, profiles_frequency,
+            profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)
 
@@ -157,8 +160,11 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     end
 
     # perform the full integration
+    tstep = 0
     TimerOutputs.@timeit to "time stepping" for (state, t) in OrdinaryDiffEq.tuples(integrator)
         # this part is run after every step (not before/during)
+        tstep += 1
+        TimerOutputs.@timeit to "output" log_profiles!(pp, state.x, cf.lower_bcs, cf.upper_bcs, t, tstep)
         TimerOutputs.@timeit to "output" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
     end
 
