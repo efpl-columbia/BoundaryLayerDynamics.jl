@@ -49,14 +49,23 @@ function vlayers_below(vlayers, bc_below::BoundaryCondition{InnerProc})
     bc_below.buffer_fd, vlayers[1:end-1]...
 end
 
+# NOTE: We can compute products directly from Fourier coefficients since we
+# only need the (0,0) wavenumber of the product. The contributions to this are
+# the products vel1(kx,ky)*vel2(-kx,-ky) or equivalently (from the properties
+# of DFTs of real-valued data) vel1(kx,ky)*conj(vel2(kx,ky)). However, we have
+# to account for the compact representation of these coefficients, i.e. we have
+# to count the values for kx=1..kx_max twice since the negative kx-frequencies
+# are not saved explicitly (because they are just the complex conjugate of the
+# frequencies with opposite sign).
 avg_from_fd(vel::AbstractArray{Complex{T},2}) where T = real(vel[1,1])
 avg_sq_from_fd(vel::AbstractArray{Complex{T},2}) where T =
-        2 * mapreduce(abs2, +, vel) - abs2(vel[1,1])
+        @views mapreduce(abs2, +, vel[1,:]) + 2 * mapreduce(abs2, +, vel[2:end,:])
 avg_prod_from_fd(vel1::AbstractArray{Complex{T},2}, vel2::AbstractArray{Complex{T},2}) where T =
         (prod2((z1, z2)) = real(z1) * real(z2) + imag(z1) * imag(z2);
-         2 * mapreduce(prod2, +, zip(vel1, vel2)) - prod2((vel1[1,1], vel2[1,1])))
+        @views mapreduce(prod2, +, zip(vel1[1,:], vel2[1,:])) +
+           2 * mapreduce(prod2, +, zip(vel1[2:end,:], vel2[2:end,:])))
 avg_prod_from_fd(vel::AbstractArray{Complex{T},2}, bc::DirichletBC) where T =
-        2 * bc.value * mapreduce(real, +, vel) - bc.value * real(vel[1,1])
+        bc.value * real(vel[1,1])
 
 function save_profiles!(profiles::MeanProfiles, vel, lower_bcs, upper_bcs)
     wa = vlayers_above(layers(vel[3]), upper_bcs[3])
