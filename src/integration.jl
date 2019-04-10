@@ -164,7 +164,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     TimerOutputs.@timeit to "time stepping" for (state, t) in OrdinaryDiffEq.tuples(integrator)
         # this part is run after every step (not before/during)
         tstep += 1
-        TimerOutputs.@timeit to "output" log_profiles!(pp, state.x, cf.lower_bcs, cf.upper_bcs, t, tstep)
+        TimerOutputs.@timeit to "output" log_profiles!(pp, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
         TimerOutputs.@timeit to "output" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
     end
 
