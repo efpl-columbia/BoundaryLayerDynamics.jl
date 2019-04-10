@@ -235,4 +235,4 @@ end
 
 read_snapshot(dir, gd, domain_size::Tuple{T,T,T}) where T = read_snapshot!(
         (zeros_fd(T, gd, NodeSet(:H)), zeros_fd(T, gd, NodeSet(:H)),
-        zeros_fd(T, gd, NodeSet(:V))), gd, domain_size)
+        zeros_fd(T, gd, NodeSet(:V))), dir, gd, domain_size)
