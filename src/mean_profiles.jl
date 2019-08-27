@@ -139,32 +139,42 @@ avg_sq_dz_from_fd(vel_below::AbstractArray{Complex{T},2}, bc_above::DirichletBC,
         abs2((bc_above.value - vel_below[1,1]) * dz)
 
 function save_profiles!(profiles::MeanProfiles, vel, lower_bcs, upper_bcs, df)
-    ua = hlayers_above(layers(vel[1]), upper_bcs[1])
-    ub = hlayers_below(layers(vel[1]), lower_bcs[1])
-    va = hlayers_above(layers(vel[2]), upper_bcs[2])
-    vb = hlayers_below(layers(vel[2]), lower_bcs[2])
-    wa = vlayers_above(layers(vel[3]), upper_bcs[3])
-    wb = vlayers_below(layers(vel[3]), lower_bcs[3])
-    profiles.u[:]   .+= avg_from_fd.(layers(vel[1]))
-    profiles.v[:]   .+= avg_from_fd.(layers(vel[2]))
-    profiles.w[:]   .+= avg_from_fd.(layers(vel[3]))
-    profiles.uu[:]  .+= avg_sq_from_fd.(layers(vel[1]))
-    profiles.vv[:]  .+= avg_sq_from_fd.(layers(vel[2]))
-    profiles.ww[:]  .+= avg_sq_from_fd.(layers(vel[3]))
-    profiles.uv[:]  .+= avg_prod_from_fd.(layers(vel[1]), layers(vel[2]))
-    profiles.uwa[:] .+= avg_prod_from_fd.(layers(vel[1]), wa)
-    profiles.uwb[:] .+= avg_prod_from_fd.(layers(vel[1]), wb)
-    profiles.vwa[:] .+= avg_prod_from_fd.(layers(vel[2]), wa)
-    profiles.vwb[:] .+= avg_prod_from_fd.(layers(vel[2]), wb)
-    profiles.uxux[:] .+= avg_sq_dx_from_fd.(layers(vel[1]), (df.dx1,))
-    profiles.vxvx[:] .+= avg_sq_dx_from_fd.(layers(vel[2]), (df.dx1,))
-    profiles.wxwx[:] .+= avg_sq_dx_from_fd.(layers(vel[3]), (df.dx1,))
-    profiles.uyuy[:] .+= avg_sq_dy_from_fd.(layers(vel[1]), (df.dy1,))
-    profiles.vyvy[:] .+= avg_sq_dy_from_fd.(layers(vel[2]), (df.dy1,))
-    profiles.wywy[:] .+= avg_sq_dy_from_fd.(layers(vel[3]), (df.dy1,))
-    profiles.uzuz[:] .+= avg_sq_dz_from_fd.(ub, ua, (df.dz1,))
-    profiles.vzvz[:] .+= avg_sq_dz_from_fd.(vb, va, (df.dz1,))
-    profiles.wzwz[:] .+= avg_sq_dz_from_fd.(wb, wa, (df.dz1,))
+    TimerOutputs.@timeit "exchange boundary data" begin
+        ua = hlayers_above(layers(vel[1]), upper_bcs[1])
+        ub = hlayers_below(layers(vel[1]), lower_bcs[1])
+        va = hlayers_above(layers(vel[2]), upper_bcs[2])
+        vb = hlayers_below(layers(vel[2]), lower_bcs[2])
+        wa = vlayers_above(layers(vel[3]), upper_bcs[3])
+        wb = vlayers_below(layers(vel[3]), lower_bcs[3])
+    end
+    TimerOutputs.@timeit "save velocity" begin
+        profiles.u[:]   .+= avg_from_fd.(layers(vel[1]))
+        profiles.v[:]   .+= avg_from_fd.(layers(vel[2]))
+        profiles.w[:]   .+= avg_from_fd.(layers(vel[3]))
+    end
+    TimerOutputs.@timeit "save kinetic energy" begin
+        profiles.uu[:]  .+= avg_sq_from_fd.(layers(vel[1]))
+        profiles.vv[:]  .+= avg_sq_from_fd.(layers(vel[2]))
+        profiles.ww[:]  .+= avg_sq_from_fd.(layers(vel[3]))
+    end
+    TimerOutputs.@timeit "save velocity products" begin
+        profiles.uv[:]  .+= avg_prod_from_fd.(layers(vel[1]), layers(vel[2]))
+        profiles.uwa[:] .+= avg_prod_from_fd.(layers(vel[1]), wa)
+        profiles.uwb[:] .+= avg_prod_from_fd.(layers(vel[1]), wb)
+        profiles.vwa[:] .+= avg_prod_from_fd.(layers(vel[2]), wa)
+        profiles.vwb[:] .+= avg_prod_from_fd.(layers(vel[2]), wb)
+    end
+    TimerOutputs.@timeit "save diffusion terms" begin
+        profiles.uxux[:] .+= avg_sq_dx_from_fd.(layers(vel[1]), (df.dx1,))
+        profiles.vxvx[:] .+= avg_sq_dx_from_fd.(layers(vel[2]), (df.dx1,))
+        profiles.wxwx[:] .+= avg_sq_dx_from_fd.(layers(vel[3]), (df.dx1,))
+        profiles.uyuy[:] .+= avg_sq_dy_from_fd.(layers(vel[1]), (df.dy1,))
+        profiles.vyvy[:] .+= avg_sq_dy_from_fd.(layers(vel[2]), (df.dy1,))
+        profiles.wywy[:] .+= avg_sq_dy_from_fd.(layers(vel[3]), (df.dy1,))
+        profiles.uzuz[:] .+= avg_sq_dz_from_fd.(ub, ua, (df.dz1,))
+        profiles.vzvz[:] .+= avg_sq_dz_from_fd.(vb, va, (df.dz1,))
+        profiles.wzwz[:] .+= avg_sq_dz_from_fd.(wb, wa, (df.dz1,))
+    end
     profiles.counter[] += 1
 end
 
