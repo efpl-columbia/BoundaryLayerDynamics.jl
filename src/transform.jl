@@ -45,10 +45,10 @@ struct DistributedGrid{P<:ProcType}
 end
 
 function vertical_range(nz, proc_id, proc_count)
-    nz_per_proc = cld(nz, proc_count)
-    (1 + nz_per_proc * (proc_count - 1)) > nz && error("Some processes would have zero vertical layers")
-    iz_min = 1 + nz_per_proc * (proc_id - 1)
-    iz_max = min(iz_min + nz_per_proc - 1, nz)
+    nz >= proc_count || error("There should not be more processes than vertical layers")
+    nz_per_proc, nz_rem = divrem(nz, proc_count)
+    iz_min = 1 + nz_per_proc * (proc_id - 1) + min(nz_rem, proc_id - 1)
+    iz_max = min(nz_per_proc * proc_id + min(nz_rem, proc_id), nz)
     nz_local_h = iz_max - iz_min + 1
     nz_local_v = (proc_id == proc_count ? nz_local_h - 1 : nz_local_h)
     iz_min, iz_max, nz_local_h, nz_local_v
