@@ -159,6 +159,94 @@ bc_freeslip(T, gd) = (NeumannBC(gd, zero(T)),
                       NeumannBC(gd, zero(T)),
                     DirichletBC(gd, zero(T)))
 
+layers(field::Array{T,3}) where T =
+        Tuple(view(field, :, :, iz) for iz=1:size(field,3))
+
+@inline function get_layer_below(layers::Tuple, lower_bc::BoundaryCondition{SingleProc})
+    lower_bc
+end
+@inline function get_layer_below(layers::Tuple, lower_bc::BoundaryCondition{MinProc})
+    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
+    lower_bc
+end
+@inline function get_layer_below(layers::NTuple{N,AbstractArray{Complex{T}}},
+        lower_bc::BoundaryCondition{MaxProc,T}) where {N,T}
+    MPI.Recv!(lower_bc.buffer_fd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
+    lower_bc.buffer_fd
+end
+@inline function get_layer_below(layers::NTuple{N,AbstractArray{Complex{T}}},
+        lower_bc::BoundaryCondition{InnerProc,T}) where {N,T}
+    r = MPI.Irecv!(lower_bc.buffer_fd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
+    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
+    MPI.Wait!(r)
+    lower_bc.buffer_fd
+end
+
+# TODO: consider using a different way of handling pd & fd
+@inline function get_layer_below_pd(layers::Tuple, lower_bc::BoundaryCondition{SingleProc})
+    lower_bc
+end
+@inline function get_layer_below_pd(layers::Tuple, lower_bc::BoundaryCondition{MinProc})
+    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
+    lower_bc
+end
+@inline function get_layer_below_pd(layers::NTuple{N,AbstractArray{T}},
+        lower_bc::BoundaryCondition{MaxProc,T}) where {N,T}
+    # NOTE: it needs to be explicit that the pd version of this method is wanted,
+    # since layers can be empty, in which case the type information is lost
+    MPI.Recv!(lower_bc.buffer_pd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
+    lower_bc.buffer_pd
+end
+@inline function get_layer_below_pd(layers::NTuple{N,AbstractArray{T}},
+        lower_bc::BoundaryCondition{InnerProc,T}) where {N,T}
+    r = MPI.Irecv!(lower_bc.buffer_pd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
+    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
+    MPI.Wait!(r)
+    lower_bc.buffer_pd
+end
+
+@inline function get_layer_above(layers::Tuple, upper_bc::BoundaryCondition{SingleProc})
+    upper_bc
+end
+@inline function get_layer_above(layers::Tuple, upper_bc::BoundaryCondition{MaxProc})
+    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
+    upper_bc
+end
+@inline function get_layer_above(layers::Tuple{}, upper_bc::DirichletBC{MaxProc,T}) where T
+    # this is a special case for when the top process does not have any layers,
+    # which is the case if there is only one layer per process. in this case, we
+    # fill the BC buffer with the boundary condition and pass that down to the
+    # process below
+    fill!(upper_bc.buffer_fd, zero(T))
+    upper_bc.buffer_fd[1,1] = upper_bc.value
+    MPI.Send(upper_bc.buffer_fd, upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
+    nothing # prevent the caller from trying to use the return value
+end
+@inline function get_layer_above(layers::NTuple{N,AbstractArray{Complex{T}}},
+        upper_bc::BoundaryCondition{MinProc,T}) where {N,T}
+    MPI.Recv!(upper_bc.buffer_fd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
+    upper_bc.buffer_fd
+end
+@inline function get_layer_above(layers::NTuple{N,AbstractArray{T}},
+        upper_bc::BoundaryCondition{MinProc,T}) where {N,T}
+    MPI.Recv!(upper_bc.buffer_pd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
+    upper_bc.buffer_pd
+end
+@inline function get_layer_above(layers::NTuple{N,AbstractArray{Complex{T}}},
+        upper_bc::BoundaryCondition{InnerProc,T}) where {N,T}
+    r = MPI.Irecv!(upper_bc.buffer_fd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
+    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
+    MPI.Wait!(r)
+    upper_bc.buffer_fd
+end
+@inline function get_layer_above(layers::NTuple{N,AbstractArray{T}},
+        upper_bc::BoundaryCondition{InnerProc,T}) where {N,T}
+    r = MPI.Irecv!(upper_bc.buffer_pd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
+    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
+    MPI.Wait!(r)
+    upper_bc.buffer_pd
+end
+
 struct HorizontalTransform{T<:SupportedReals}
 
     plan_fwd_h::FFTW.rFFTWPlan{T,FFTW.FORWARD,false,3}
