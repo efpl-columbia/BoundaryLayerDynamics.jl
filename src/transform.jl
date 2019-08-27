@@ -362,6 +362,10 @@ end
 @inline coord(i, δ, ::NodeSet{:V}) = (δ[1] * (i[1]-1),
                                       δ[2] * (i[2]-1),
                                       δ[3] * (i[3]))
+coords(gd::DistributedGrid, domain_size, ns::NodeSet) = (
+    δ = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global);
+    iz_local = gd.iz_min:(gd.iz_min + get_nz(gd, ns) - 1);
+    (coord((ix, iy, iz), δ, ns) for ix=1:gd.nx_pd, iy=1:gd.ny_pd, iz=iz_local))
 
 function set_field!(field_fd, ht::HorizontalTransform, field_pd::Function,
         grid_spacing, iz_min, ns::NodeSet)

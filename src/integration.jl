@@ -107,6 +107,15 @@ closed_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
         constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1], domain[2],
         2.0), ic, bc_noslip(), bc_noslip(), 1 / Re, (1.0, 0.0), constant_flux)
 
+# TODO: consider removing the "get_" from these names
+get_velocity(gd::DistributedGrid, ht::HorizontalTransform{T}, velocity) where T = (
+        get_field!(zeros_pd(T, gd, NodeSet(:H)), ht, velocity[1], NodeSet(:H)),
+        get_field!(zeros_pd(T, gd, NodeSet(:H)), ht, velocity[2], NodeSet(:H)),
+        get_field!(zeros_pd(T, gd, NodeSet(:V)), ht, velocity[3], NodeSet(:V)))
+get_velocity(cf::ChannelFlowProblem) = get_velocity(cf.grid, cf.transform, cf.velocity)
+
+coords(cf::ChannelFlowProblem, ns::NodeSet) = coords(cf.grid, cf.domain_size, ns)
+
 function show_all(io::IO, to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
         r = MPI.Comm_rank(MPI.COMM_WORLD)
