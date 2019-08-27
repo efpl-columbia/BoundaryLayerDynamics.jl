@@ -247,6 +247,29 @@ end
     upper_bc.buffer_pd
 end
 
+# interpolation v-nodes to h-nodes
+add_interpolated_layer!(layer, layer¯, layer⁺) =
+    (@. layer += (layer¯ + layer⁺) / 2; layer)
+add_interpolated_layer!(layer, lbc::DirichletBC, layer⁺) =
+        (@. layer += (lbc.value + layer⁺) / 2; layer)
+add_interpolated_layer!(layer, layer¯, ubc::DirichletBC) =
+        (@. layer += (layer¯ + ubc.value) / 2; layer)
+
+function add_interpolation!(layers_h::NTuple{NZH}, layers_v::NTuple{NZV}, lower_bc, upper_bc) where {NZH, NZV}
+    layer_below = get_layer_below_pd(layers_v, lower_bc)
+    for i=1:NZH
+        add_interpolated_layer!(layers_h[i], i==1 ? layer_below : layers_v[i-1],
+                                i==NZH==NZV+1 ? upper_bc : layers_v[i])
+    end
+    layers_h
+end
+
+function interpolate(field_v, lower_bc::BoundaryCondition{P}, upper_bc::BoundaryCondition{P}) where {P}
+    field_h = (P <: HighestProc) ? zeros(eltype(field_v), size(field_v, 1), size(field_v, 2), size(field_v, 3) + 1) : zero(field_v)
+    add_interpolation!(layers(field_h), layers(field_v), lower_bc, upper_bc)
+    field_h
+end
+
 struct HorizontalTransform{T<:SupportedReals}
 
     plan_fwd_h::FFTW.rFFTWPlan{T,FFTW.FORWARD,false,3}
