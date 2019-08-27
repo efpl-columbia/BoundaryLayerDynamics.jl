@@ -104,14 +104,16 @@ function test_constant_flux_poiseuille(nz)
     ε(cf) = CF.global_sum(abs.(cf.velocity[1][1,1,:] .- u_exact[cf.grid.iz_min:cf.grid.iz_max])) / nz
 
     # compute errors for constant forcing first
-    cf1 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64), false, 1.0, (1.0, 0.0), false)
+    cf1 = closed_channel((4, 4, nz), 1.0, constant_flux = false)
+
     for i=1:nit
         integrate!(cf1, dt, nt, verbose=false)
         ε_constant_force[i] = ε(cf1)
     end
 
     # compute errors for constant flux next
-    cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64), false, 1.0, (mf, 0.0), true)
+    cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64),
+                             CF.bc_noslip(), CF.bc_noslip(), 1.0, (mf, 0.0), true)
     for i=1:nit
         integrate!(cf2, dt, nt, verbose=false)
         ε_constant_flux[i] = ε(cf2)

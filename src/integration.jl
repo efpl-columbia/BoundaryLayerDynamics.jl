@@ -31,6 +31,34 @@ end
 
 init_pressure(T, gd) = zeros_fd(T, gd, NodeSet(:H))
 
+BoundaryConditionSpec = Union{String,Pair}
+
+function init_bc(T, gd::DistributedGrid, spec::Pair)
+    if spec[1] == "Dirichlet"
+        DirichletBC(gd, convert(T, spec[2]))
+    elseif spec[1] == "Neumann"
+        NeumannBC(gd, convert(T, spec[2]))
+    else
+        error("Invalid boundary condition: " * spec)
+    end
+end
+
+function init_bc(T, gd::DistributedGrid, spec::String)
+    if spec == "Dirichlet"
+        DirichletBC(gd, zero(T))
+    elseif spec == "Neumann"
+        NeumannBC(gd, zero(T))
+    else
+        error("Invalid boundary condition: " * spec)
+    end
+end
+
+init_bcs(T, gd::DistributedGrid, specs::NTuple{3,BoundaryConditionSpec}) =
+    Tuple(init_bc(T, gd, spec) for spec=specs)
+
+bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
+bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
+
 struct ChannelFlowProblem{P,T}
     velocity::NTuple{3,Array{Complex{T},3}}
     pressure::Array{Complex{T},3}
@@ -49,9 +77,9 @@ struct ChannelFlowProblem{P,T}
     constant_flux::Bool
 
     ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T},
-        initial_conditions::NTuple{3,Function}, open_channel::Bool,
-        diffusion_coeff::T, forcing::NTuple{2,T}, constant_flux::Bool,
-        ) where {T<:SupportedReals} = begin
+        initial_conditions::NTuple{3,Function}, lower_bcs::NTuple{3,BoundaryConditionSpec},
+        upper_bcs::NTuple{3,BoundaryConditionSpec}, diffusion_coeff::T, forcing::NTuple{2,T},
+        constant_flux::Bool) where {T<:SupportedReals} = begin
 
         pressure_solver_batch_size = 64
 
@@ -64,8 +92,8 @@ struct ChannelFlowProblem{P,T}
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
             gd, domain_size, ht, df, AdvectionBuffers(T, gd, domain_size),
-            bc_noslip(T, gd), open_channel ? bc_freeslip(T, gd) : bc_noslip(T, gd),
-            DirichletBC(gd, zero(T)), prepare_pressure_solver(gd, df, pressure_solver_batch_size),
+            init_bcs(T, gd, lower_bcs), init_bcs(T, gd, upper_bcs), DirichletBC(gd, zero(T)),
+            prepare_pressure_solver(gd, df, pressure_solver_batch_size),
             diffusion_coeff, forcing, constant_flux)
     end
 end
@@ -73,11 +101,11 @@ end
 zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
 
 open_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
-        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
-        domain[2], 1.0), ic, true, 1 / Re, (1.0, 0.0), constant_flux)
+        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1], domain[2],
+        1.0), ic, bc_noslip(), bc_freeslip(), 1 / Re, (1.0, 0.0), constant_flux)
 closed_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
-        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1],
-        domain[2], 2.0), ic, false, 1 / Re, (1.0, 0.0), constant_flux)
+        constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1], domain[2],
+        2.0), ic, bc_noslip(), bc_noslip(), 1 / Re, (1.0, 0.0), constant_flux)
 
 function show_all(io::IO, to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
