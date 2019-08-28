@@ -1,90 +1,64 @@
 """
-Analytical solution for transient Poiseuille flow. The solution is normalized
-as poiseuille(y/δ, tν/δ²) = uν/Gδ², where G is the pressure gradient -dp/dx.
+Test that a standard channel flow with output can be run, including output,
+without producing an error.
 """
-function poiseuille(y, t; kmax=100_000)
-    t == 0 && return 0 .* y # t=0 would require many modes, but u(0) = 0
-    u = (y .- 0.5 * y.^2) # initialize with steady-state solution
-    t == Inf && return u
-    for k=1:2:kmax # add modes until the contribution is negligible
-        k_factor = 16/(k^3*π^3) * exp(-0.25*k^2*π^2*t)
-        8*k_factor < eps() && break # 8 is a safety factor
-        u -= k_factor * sin.(0.5*k*π*y)
-    end
-    u
-end
+function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
+    cf = closed_channel((Nh,Nh,Nv), Re, constant_flux = true)
+    dt = (2/Nv)^2 * Re * CFL
+    io = IOBuffer()
 
-"""
-Compute the maximum relative error of a Poiseuille flow at time T with Nv
-vertical grid points. The constant time step is computed such that the CFL is
-respected based on the viscous velocity ν/dz.
-"""
-function poiseuille_error(T, Nt, Nv, Nh, Re; snapshot_steps=Int[], snapshot_dir=pwd())
-
-    cf = closed_channel((Nh,Nh,Nv), Re)
-    integrate!(cf, T/Nt, Nt, verbose=false, snapshot_steps=snapshot_steps,
-            snapshot_dir=snapshot_dir)
-
-    εrel(u, uref) = maximum(abs.(u .- uref) ./ uref) # max. relative error
-
-    for (i,s) in enumerate(snapshot_steps)
-        d = readdir(snapshot_dir)[i] # assumes there is nothing else in the folder
-        z, ustep = CF.read_field(joinpath(snapshot_dir, d, "u.cbd"), CF.NodeSet(:H))[5:6]
-
-        # values should be the same in horizontal direction, check minimum and
-        # maximum to make sure they are
-        u1 = global_vector(minimum(ustep, dims=(1,2))[1,1,:])
-        u2 = global_vector(maximum(ustep, dims=(1,2))[1,1,:])
-        @test u1 ≈ u2
-
-        # check that the computed solution is closer to the reference solution
-        # at the current time step than to the reference solution at the steps
-        # before and after – this should be the case even if we take quite large
-        # time steps (coarse vertical resolution)
-        tstep = T * s / Nt
-        uref_step = poiseuille(z, tstep)
-        uref_before = poiseuille(z, tstep - T / Nt)
-        uref_after  = poiseuille(z, tstep + T / Nt)
-        εstep = εrel(u1, uref_step)
-        @test uref_before < u1 < uref_after
-        @test εstep < εrel(u1, uref_before)
-        @test εstep < εrel(u1, uref_after)
-    end
-
-    u = global_vector(real(cf.velocity[1][1,1,:]))
-    uref = poiseuille(LinRange(0, 2, 2*Nv+1)[2:2:end-1], T)
-    εrel(u, uref)
-end
-
-"""
-Compute the number of steps necessary to integrate up to time T based on the
-vertical grid spacing and the viscous stability criterion.
-"""
-Nt_viscous(T, dz, CFL, Re) = ceil(Int, T / (CFL * dz^2 * Re)) # dt = CFL dz²/ν
-
-"""
-Test the integration error of a transient Poiseuille flow. The default tolerance
-is computed based on the theoretical order of convergence O(dz²) and a constant
-factor that should work for Nv≥4 based on earlier convergence tests.
-"""
-function test_poiseuille(Nv; Nh = 4, Re = 1.0, CFL = 0.5, T = 1/Re, tol=Nv^(-2)/4)
-    Nt = Nt_viscous(T, 2/Nv, CFL, Re)
-    snapshots = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)]
     mktempdir_parallel() do dir
-        @test poiseuille_error(T, Nt, Nv, Nh, Re, snapshot_steps=snapshots,
-                snapshot_dir=dir) < tol
+        integrate!(cf, dt, Nt, output_io = IOBuffer(),
+            profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
+            snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
+            snapshot_dir = joinpath(dir, "snapshots"), verbose = true)
+
+        # attempt setting the velocity from the latest snapshot
+        last_snapshot = readdir(joinpath(dir, "snapshots"))[end]
+        CF.load_snapshot!(cf, joinpath(dir, "snapshots", last_snapshot))
     end
 end
 
-"""
-Test the order of convergence of a transient Poiseuille flow is a least O(dz²).
-The vertical resolutions are given as powers of 2.
-"""
-function test_poiseuille_convergence(logNv; Nh = 4, Re = 1.0, CFL = 0.5, T = 1/Re)
-    Nv = [2^logN for logN=logNv]
-    Nt = Nt_viscous(T, 2/Nv[end], CFL, Re)
-    ε = [poiseuille_error(T, Nt, Nv, Nh, Re) for Nv=Nv]
-    test_convergence(Nv, ε, order=2)
+include("laminar_flow_problems.jl")
+
+function test_laminar_flow_convergence(T, Nz_min = 3)
+
+    # use a progression of integers that are close to equidistant in log-space
+    N = filter(n -> n>=Nz_min, [11, 14, 18, 24, 32])
+    Random.seed!(363613674) # same seed for each process
+
+    # parameters for Poiseuille & Couette flow
+    ν  = one(T) / 4 * 3 + rand(T) / 2
+    ex = (θ = rand(T) * 2 * π; (cos(θ), sin(θ)))
+    δ  = one(T) / 4 * 3 + rand(T) / 2
+    uτ = one(T) / 4 * 3 + rand(T) / 2
+    t  = (δ^2 / ν) / 6
+    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν)
+
+    εp = poiseuille_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex)
+    εc =    couette_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex)
+
+    # parameters for Taylor-Green vortex
+    A  = one(T) / 4 * 3 + rand(T) / 2
+    α  = one(T) / 4 * 3 + rand(T) / 2
+    β  = one(T) / 4 * 3 + rand(T) / 2
+    t = 1 / ((α^2 + β^2) * ν)
+    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t)
+
+    εtgv = taylor_green_vortex_error.(T, 3, N, Nt, t=t, ν=ν, α=α, β=β, A=A, dir=ex)
+    εtgh = taylor_green_vortex_error.(T, 3, Nz_min, N,  t=t, ν=ν, α=α, β=β, A=A)
+
+    @test εp[end] < 2e-3
+    @test εc[end] < 2e-3
+    @test εtgv[end] < 2e-3
+    @test εtgh[end] < 1e-5
+
+    test_convergence(N, εp, order=2)
+    test_convergence(N, εc, order=2)
+    test_convergence(N, εtgv, order=2)
+    test_convergence(N, εtgh, order=3)
+
+    N, εp, εc, εtgv, εtgh # return for plotting in interactive usage
 end
 
 function test_constant_flux_poiseuille(nz)
@@ -126,40 +100,13 @@ function test_constant_flux_poiseuille(nz)
     @test ε_constant_flux[end] < 1e-6 # should be the case for nz≥4
 end
 
-"""
-Test that a standard channel flow with output can be run, including output,
-without producing an error.
-"""
-function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
-    cf = closed_channel((Nh,Nh,Nv), Re, constant_flux = true)
-    dt = (2/Nv)^2 * Re * CFL
-    io = IOBuffer()
+# test that a channel flow with output runs without error
+test_channel(16)
+MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))
 
-    mktempdir_parallel() do dir
-        integrate!(cf, dt, Nt, output_io = IOBuffer(),
-            profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
-            snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
-            snapshot_dir = joinpath(dir, "snapshots"), verbose = true)
-
-        # attempt setting the velocity from the latest snapshot
-        last_snapshot = readdir(joinpath(dir, "snapshots"))[end]
-        CF.load_snapshot!(cf, joinpath(dir, "snapshots", last_snapshot))
-    end
-end
-
-
-# test the correct integration of a poiseuille flow at t=1 for Nz=16
-# (also test the parallel version with one layer per process)
-test_poiseuille(16)
-MPI.Initialized() && test_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
-
-# test order of convergence for Nz=16,32,64,128,256 is at least 2
-test_poiseuille_convergence(4:8, T=0.01)
+# test that laminar flow solutions converge at the right order
+test_laminar_flow_convergence(Float64, MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 3)
 
 # test that a poiseuille flow driven by a constant flux converges faster
 test_constant_flux_poiseuille(16)
 MPI.Initialized() && test_constant_flux_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
-
-# test that a channel flow with output runs without error
-test_channel(16)
-MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))
