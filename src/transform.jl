@@ -137,20 +137,25 @@ struct DirichletBC{P,T} <: BoundaryCondition{P,T}
     buffer_pd::Array{T,2}
     neighbor_below::Int
     neighbor_above::Int
-    DirichletBC(gd::DistributedGrid, value::T) where T =
-        new{proc_type(),T}(value, zeros(Complex{T}, gd.nx_fd, gd.ny_fd),
-        zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
+    DirichletBC(value::T, nh_fd, nh_pd) where T =
+        new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
+        zeros(T, nh_pd...), proc_below(), proc_above())
 end
+DirichletBC(gd::DistributedGrid, value::T) where T =
+    DirichletBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
+
 struct NeumannBC{P,T} <: BoundaryCondition{P,T}
     value::T
     buffer_fd::Array{Complex{T},2}
     buffer_pd::Array{T,2}
     neighbor_below::Int
     neighbor_above::Int
-    NeumannBC(gd::DistributedGrid, value::T) where T =
-        new{proc_type(),T}(value, zeros(Complex{T}, gd.nx_fd, gd.ny_fd),
-        zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
+    NeumannBC(value::T, nh_fd, nh_pd) where T =
+        new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
+        zeros(T, nh_pd...), proc_below(), proc_above())
 end
+NeumannBC(gd::DistributedGrid, value::T) where T =
+    NeumannBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
 bc_noslip(T, gd) = (DirichletBC(gd, zero(T)),
                     DirichletBC(gd, zero(T)),
