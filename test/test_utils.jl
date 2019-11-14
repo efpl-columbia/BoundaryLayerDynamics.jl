@@ -48,10 +48,11 @@ end
 
 function run_mpi_test(file, nprocs::Integer)
     juliabin = joinpath(Sys.BINDIR, Base.julia_exename())
+    project = Base.active_project()
     path = joinpath(dirname(@__FILE__), file)
     pass = true
     try
-        run(`mpiexec -n $(nprocs) --oversubscribe $(juliabin) $(path)`)
+        run(`mpiexec -n $(nprocs) --oversubscribe $(juliabin) "--project=$(project)" $(path)`)
     catch
         st = stacktrace()[2:end]
         showerror(stderr, MPITestSetException(nprocs,
