@@ -59,6 +59,11 @@ init_bcs(T, gd::DistributedGrid, specs::NTuple{3,BoundaryConditionSpec}) =
 bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
 bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
 
+init_advection(T, gd, ds, sgs::Nothing, wm::Nothing) =
+        AdvectionBuffers(T, gd, ds)
+init_advection(T, gd, ds, sgs::StaticSmagorinskiModel, wm::RoughWallEquilibriumModel) =
+        FilteredAdvectionBuffers(T, gd, ds, sgs, wm)
+
 struct ChannelFlowProblem{P,T}
     velocity::NTuple{3,Array{Complex{T},3}}
     pressure::Array{Complex{T},3}
@@ -67,10 +72,10 @@ struct ChannelFlowProblem{P,T}
     domain_size::NTuple{3,T}
     transform::HorizontalTransform{T}
     derivatives::DerivativeFactors{T}
-    advection_buffers::AdvectionBuffers{T}
+    advection_buffers::Union{AdvectionBuffers{T},FilteredAdvectionBuffers{T,P}}
     lower_bcs::NTuple{3,BoundaryCondition}
     upper_bcs::NTuple{3,BoundaryCondition}
-    pressure_bc::DirichletBC
+    pressure_bc::UnspecifiedBC
     pressure_solver::DistributedBatchLDLt{P,T,Complex{T}}
     diffusion_coeff::T
     forcing::NTuple{2,T}
@@ -79,7 +84,7 @@ struct ChannelFlowProblem{P,T}
     ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T},
         initial_conditions::NTuple{3,Function}, lower_bcs::NTuple{3,BoundaryConditionSpec},
         upper_bcs::NTuple{3,BoundaryConditionSpec}, diffusion_coeff::T, forcing::NTuple{2,T},
-        constant_flux::Bool) where {T<:SupportedReals} = begin
+        constant_flux::Bool; sgs_model = nothing, wall_model = nothing) where {T<:SupportedReals} = begin
 
         pressure_solver_batch_size = 64
 
@@ -91,8 +96,8 @@ struct ChannelFlowProblem{P,T}
             init_velocity(gd, ht, initial_conditions, domain_size),
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
-            gd, domain_size, ht, df, AdvectionBuffers(T, gd, domain_size),
-            init_bcs(T, gd, lower_bcs), init_bcs(T, gd, upper_bcs), DirichletBC(gd, zero(T)),
+            gd, domain_size, ht, df, init_advection(T, gd, domain_size, sgs_model, wall_model),
+            init_bcs(T, gd, lower_bcs), init_bcs(T, gd, upper_bcs), UnspecifiedBC(T, gd),
             prepare_pressure_solver(gd, df, pressure_solver_batch_size),
             diffusion_coeff, forcing, constant_flux)
     end

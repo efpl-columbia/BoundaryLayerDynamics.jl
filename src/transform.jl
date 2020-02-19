@@ -157,6 +157,23 @@ end
 NeumannBC(gd::DistributedGrid, value::T) where T =
     NeumannBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
+"""
+The UnspecifiedBC can be used as boundary condition for terms that do not have
+a boundary condition defined, such as pressure and the horizontal derivatives
+of u₁ and u₂. These might still require a boundary condition to pass data
+between layers, but they do not have a value specified for the actual boundary
+and will cause an error if the values is attempted to be accessed.
+"""
+struct UnspecifiedBC{P,T} <: BoundaryCondition{P,T}
+    buffer_fd::Array{Complex{T},2}
+    buffer_pd::Array{T,2}
+    neighbor_below::Int
+    neighbor_above::Int
+    UnspecifiedBC(T, gd::DistributedGrid) =
+        new{proc_type(),T}(zeros(Complex{T}, gd.nx_fd, gd.ny_fd),
+        zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
+end
+
 bc_noslip(T, gd) = (DirichletBC(gd, zero(T)),
                     DirichletBC(gd, zero(T)),
                     DirichletBC(gd, zero(T)))

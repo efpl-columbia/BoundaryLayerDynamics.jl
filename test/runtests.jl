@@ -13,6 +13,7 @@ println("Testing ChannelFlow.jl... (serial)")
     TimerOutputs.@timeit to "pressure test" @testset "Pressure Solver" begin include("pressure_solver_test.jl") end
     TimerOutputs.@timeit to "output test" @testset "File I/O" begin include("output_test.jl") end
     TimerOutputs.@timeit to "integration test" @testset "Poiseuille Flow" begin include("integration_test.jl") end
+    TimerOutputs.@timeit to "les test" @testset "Large-Eddy Simulation" begin include("les_test.jl") end
     show(to); println() # TimerOutput has no newline at the end
 end
 
