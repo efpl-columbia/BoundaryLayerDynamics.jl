@@ -19,9 +19,7 @@ struct FilteredAdvectionBuffers{T,P}
     vorticity_bcs::NTuple{2,NTuple{2,UnspecifiedBC{P,T}}}
 
     strain_rate::NTuple{3,NTuple{3,Array{T,3}}}
-    partial_strain_h::Array{T,3}
-    partial_strain_v::Array{T,3}
-    partial_strain_bcs::NTuple{3,UnspecifiedBC{P,T}}
+    strain_bcs::NTuple{2,UnspecifiedBC{P,T}}
 
     sgs_model::StaticSmagorinskiModel{T}
     wall_model::RoughWallEquilibriumModel{T}
@@ -54,8 +52,7 @@ struct FilteredAdvectionBuffers{T,P}
         # strain rate
         S13, S23, S12 = (zeros_pd(T, gd, :V), zeros_pd(T, gd, :V), zeros_pd(T, gd, :H))
         Sij = ((vel_dx1[1], S12, S13), (S12, vel_dx2[2], S23), (S13, S23, vel_dx3[3]))
-        S_h, S_v = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
-        S_bcs = (UnspecifiedBC(T, gd), UnspecifiedBC(T, gd), UnspecifiedBC(T, gd))
+        S_bcs = (UnspecifiedBC(T, gd), UnspecifiedBC(T, gd))
 
         eddy_viscosity_h = zeros_pd(T, gd, :H)
         eddy_viscosity_v = zeros_pd(T, gd, :V)
@@ -75,7 +72,7 @@ struct FilteredAdvectionBuffers{T,P}
         filter_width = domain_size ./ (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
         grid_spacing = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
 
-        new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_h, S_v, S_bcs,
+        new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_bcs,
                  sgs_model, wall_model, eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv,
                  filter_width, grid_spacing)
     end
@@ -129,55 +126,12 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     broadcast!((a,b) -> (a+b)/2, b.strain_rate[3][1], b.vel_dx3[1], b.vel_dx1[3])
     broadcast!((a,b) -> (a+b)/2, b.strain_rate[1][2], b.vel_dx1[2], b.vel_dx2[1])
 
-    # Compute S on both sets of nodes in PD, interpolating Sij.
-    @. b.partial_strain_h = b.strain_rate[1][1]^2 + b.strain_rate[2][2]^2 +
-                            b.strain_rate[3][3]^2 + 2 * b.strain_rate[1][2]^2
-    @. b.partial_strain_v = 2 * b.strain_rate[3][1]^2 + 2 * b.strain_rate[2][3]^2
-    Sh_partial = layers_expand_half_h(b.partial_strain_h, b.partial_strain_bcs[1]) # unspecified bcs are reused here
-    Sv_partial = layers_expand_half_v(b.partial_strain_v, b.partial_strain_bcs[2:3]...)
-
-    # TODO: fill in Sv_partial at the very top & bottom, from S13 & S23 that are computed
-    # with other stencils at the top & bottom
-
-    # TODO: this uses the UnspecifiedBCs, so we should make sure these are not accessible
-    # from multiple places, e.g. by wrapping the whole Sij computation in a
-    # function and only defining the expanded velocities within that function
-
-    Δ = cbrt(prod(b.filter_width))
-
-    # note: this is 2 * (S_direct + (S_below + S_above)/2)
-    νT!(νT, S_direct, S_below, S_above) = @. νT = b.sgs_model.model_constant^2 * Δ^2 * sqrt(2 * S_direct + S_below + S_above)
-
-    # νT at first H-nodes doesn’t have S_below specified, need to use one-sided FDs to compute it
-    @assert lower_bcs[3] isa DirichletBC # to ensure du3/dx1 and du3/dx2 are zero at lower boundary
-    @assert upper_bcs[3] isa DirichletBC # to ensure du3/dx1 and du3/dx2 are zero at upper boundary
-    @assert lower_bcs[1] isa DirichletBC # need other interpolation below otherwise
-    @assert lower_bcs[2] isa DirichletBC # need other interpolation below otherwise
-    @assert upper_bcs[1] isa DirichletBC # need other interpolation below otherwise
-    @assert upper_bcs[2] isa DirichletBC # need other interpolation below otherwise
-    νT!(νT, S_direct, bc::UnspecifiedBC, _) = νT = (b.sgs_model.model_constant^2 * Δ^2) * sqrt.(2 .* S_direct .+
-        (first_layer(b.vel_dx1[3]) ./ 2 .+ # du3/dx1 at first H-node (½ because of interpolation)
-            (u1ext[2] .+ 3 .* u1ext[1] .- 4 .* lower_bcs[1].value) .* (df.dz1/3) # du1/dx3 at first H-node
-            ).^2 .+ # 2 S₁₃² + 2 S₃₁² = 4 S₁₃² = (du1/dx3 + du3/dx1)²
-        (first_layer(b.vel_dx2[3]) ./ 2 .+ # du3/dx2 at first H-node (½ because of interpolation)
-            (u2ext[2] .+ 3 .* u2ext[1] .- 4 .* lower_bcs[2].value) .* (df.dz1/3) # du2/dx3 at first H-node
-            ).^2 ) # 2 S₂₃² + 2 S₃₂² = 4 S₂₃² = (du2/dx3 + du3/dx2)²
-
-    # νT at last H-nodes doesn’t have S_above specified, need to use one-sided FDs to compute it
-    νT!(νT, S_direct, _, bc::UnspecifiedBC) = νT .= (b.sgs_model.model_constant^2 * Δ^2) * sqrt.(2 .* S_direct .+
-        (last_layer(b.vel_dx1[3]) ./ 2 .+ # du3/dx1 at last H-node (½ because of interpolation)
-            (4 .* upper_bcs[1].value .- 3 .* u1ext[end] .- u1ext[end-1]) .* (df.dz1/3) # du1/dx3 at last H-node
-            ).^2 .+ # 2 S₁₃² + 2 S₃₁² = 4 S₁₃² = (du1/dx3 + du3/dx1)²
-        (last_layer(b.vel_dx2[3]) ./ 2 .+ # du3/dx2 at last H-node (½ because of interpolation)
-            (4 .* upper_bcs[2].value .- 3 .* u2ext[end] .- u2ext[end-1]) .* (df.dz1/3) # du2/dx3 at first H-node
-            ).^2 ) # 2 S₂₃² + 2 S₃₂² = 4 S₂₃² = (du2/dx3 + du3/dx2)²
-        # TODO: this probably needs extra communication when there’s one layer per process
-
-    # TODO: should rename "value" to "gradient" in NeumannBC to avoid accidentally treating it as
-    # a DirichletBC
-
-    map(νT!, layers(b.eddy_viscosity_h), layers(b.partial_strain_h), Sv_partial[1:end-1], Sv_partial[2:end])
-    map(νT!, layers(b.eddy_viscosity_v), layers(b.partial_strain_v), Sh_partial[1:end-1], Sh_partial[2:end])
+    # Compute eddy viscosity on both sets of nodes
+    L = b.sgs_model.model_constant * cbrt(prod(b.filter_width))
+    νT(SijSij) = L^2 * sqrt(2*SijSij)
+    SijSij!((b.eddy_viscosity_h, b.eddy_viscosity_v), b.strain_rate, b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.dz1)
+    b.eddy_viscosity_h .= νT.(b.eddy_viscosity_h)
+    b.eddy_viscosity_v .= νT.(b.eddy_viscosity_v)
 
     # Compute τij in PD.
     @. b.sgs[1][1] = 2 * b.eddy_viscosity_h * b.strain_rate[1][1]
@@ -258,6 +212,67 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
 
     return adv, dt_adv
 end
+
+# TODO: add support for one layer per process
+function fix_bcs(Si3::Tuple, lbc, vel, ubc, D3)
+    first = Si3[1] isa UnspecifiedBC ? dx3_boundary!(Si3[1], lbc, view(vel,:,:,1), view(vel,:,:,2), D3) : Si3[1]
+    last = Si3[end] isa UnspecifiedBC ? dx3_boundary!(Si3[end], ubc, view(vel,:,:,size(vel,3)), view(vel,:,:,size(vel,3)-1), -D3) : Si3[end]
+    first, Si3[2:end-1]..., last
+end
+
+# one-sided differences for the second-order derivatives du1/dx3 & du2/dx3 at the wall
+# (du/dx)(x=0) = (− u(1.5Δ) + 9 u(0.5Δ) − 8 u(0)) / (3 Δ) + O(Δ²)
+function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::DirichletBC, vel_h1, vel_h2, D3) # D3 is 1/Δx3
+    @. dx3.buffer_pd = D3 * (- vel_h2 + 9 * vel_h1 - 8 * vel_bc.value) / 3
+    dx3.buffer_pd
+end
+
+function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::NeumannBC, vel_h1, vel_h2, D3)
+    # we can return a scalar instead of a whole layer and the broadcasts will still work
+    vel_bc.value
+end
+
+add_interpolated_sq!(out, below, above, count = 1) = @. out += count * (below + above)^2 / 4
+
+function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, D3)
+
+    # in the following, we assume that du3/dx1 and du3/dx2 vanish at the walls
+    @assert lbcs[3] isa DirichletBC && ubcs[3] isa DirichletBC "Horizontal gradients of vertical velocity do not vanish at the walls."
+
+    # initialize output with contributions of (Sij Sij) that are on the correct nodes
+    @. SijSij_h = S[1][1]^2 + S[2][2]^2 + S[3][3]^2 + 2 * S[1][2]^2
+    @. SijSij_v = 2 * S[3][1]^2 + 2 * S[2][3]^2
+
+    # add contributions of (Sij Sij) that have to be interpolated from H-nodes to V-nodes
+    # NOTE: it is always more accurate to interpolate first and square after
+    lv = layers(SijSij_v)
+    S11 = layers_expand_half_h(S[1][1], temp_bcs[1])
+    @. add_interpolated_sq!.(lv, S11[1:end-1], S11[2:end])
+    S22 = layers_expand_half_h(S[2][2], temp_bcs[1])
+    @. add_interpolated_sq!.(lv, S22[1:end-1], S22[2:end])
+    S33 = layers_expand_half_h(S[3][3], temp_bcs[1])
+    @. add_interpolated_sq!.(lv, S33[1:end-1], S33[2:end])
+    S12 = layers_expand_half_h(S[1][2], temp_bcs[1])
+    @. add_interpolated_sq!.(lv, S12[1:end-1], S12[2:end], 2)
+
+    # add contributions of (Sij Sij) that have to be interpolated from V-nodes to H-nodes
+    # WARNING: the buffers of the temp_bcs are used temporarily when calling fix_bcs,
+    #          so be very careful when changing the order of these commands!
+    lh = layers(SijSij_h)
+    begin # top/bottom layers of S13 might be buffers of temp_bcs in this section
+        S13 = layers_expand_half_v(S[1][3], temp_bcs[1:2]...)
+        S13 = fix_bcs(S13, lbcs[1], vel[1], ubcs[1], D3)
+        @. add_interpolated_sq!.(lh, S13[1:end-1], S13[2:end], 2)
+    end
+    begin # top/bottom layers of S23 might be buffers of temp_bcs in this section
+        S23 = layers_expand_half_v(S[2][3], temp_bcs[1:2]...)
+        S23 = fix_bcs(S23, lbcs[2], vel[2], ubcs[2], D3)
+        @. add_interpolated_sq!.(lh, S23[1:end-1], S23[2:end], 2)
+    end
+
+    SijSij_h, SijSij_v
+end
+
 
 # HELPER FUNCTIONS (TODO: merge with other functions in other files)
 
