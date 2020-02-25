@@ -24,6 +24,19 @@ struct StaticSmagorinskyModel{T}
     model_constant::T
 end
 
+struct StaticSmagorinskyBuffers{T}
+    length_scale_h::Array{T,3}
+    length_scale_v::Array{T,3}
+    StaticSmagorinskyBuffers(sgs_model::StaticSmagorinskyModel{T}, gd, ds) where T = begin
+        # TODO: check whether this is the correct way of defining the filter width
+        Δ = ds ./ (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
+        L = sgs_model.model_constant * cbrt(prod(Δ))
+        Lh = L * ones(1,1,gd.nz_h)
+        Lv = L * ones(1,1,gd.nz_v)
+        new{T}(Lh, Lv)
+    end
+end
+
 struct FilteredAdvectionBuffers{T,P}
 
     vel::Tuple{Array{T,3},Array{T,3},Array{T,3}}
@@ -38,7 +51,7 @@ struct FilteredAdvectionBuffers{T,P}
     strain_rate::NTuple{3,NTuple{3,Array{T,3}}}
     strain_bcs::NTuple{2,UnspecifiedBC{P,T}}
 
-    sgs_model::StaticSmagorinskyModel{T}
+    sgs_model::StaticSmagorinskyBuffers{T}
     eddy_viscosity_h::Array{T,3}
     eddy_viscosity_v::Array{T,3}
     sgs::NTuple{3,NTuple{3,Array{T,3}}}
@@ -49,7 +62,6 @@ struct FilteredAdvectionBuffers{T,P}
 
     adv::Tuple{Array{T,3},Array{T,3},Array{T,3}}
 
-    filter_width::Tuple{T,T,T}
     grid_spacing::Tuple{T,T,T}
 
     function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, sgs_model)
@@ -84,13 +96,11 @@ struct FilteredAdvectionBuffers{T,P}
 
         adv = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
 
-        # TODO: check whether this is the correct way of defining the filter width
-        filter_width = domain_size ./ (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
         grid_spacing = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
 
         new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_bcs,
-                 sgs_model, eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv,
-                 filter_width, grid_spacing)
+                StaticSmagorinskyBuffers(sgs_model, gd, domain_size), eddy_viscosity_h, eddy_viscosity_v,
+                sgs, sgs_fd, sgs_bcs, adv, grid_spacing)
     end
 end
 
@@ -143,12 +153,11 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     broadcast!((a,b) -> (a+b)/2, b.strain_rate[1][2], b.vel_dx1[2], b.vel_dx2[1])
 
     # Compute eddy viscosity on both sets of nodes
-    L = b.sgs_model.model_constant * cbrt(prod(b.filter_width))
-    νT(SijSij) = L^2 * sqrt(2*SijSij)
+    νT(SijSij, L) = L^2 * sqrt(2*SijSij)
     SijSij!((b.eddy_viscosity_h, b.eddy_viscosity_v), b.strain_rate,
             b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.dz1)
-    map!(νT, b.eddy_viscosity_h, b.eddy_viscosity_h)
-    map!(νT, b.eddy_viscosity_v, b.eddy_viscosity_v)
+    broadcast!(νT, b.eddy_viscosity_h, b.eddy_viscosity_h, b.sgs_model.length_scale_h)
+    broadcast!(νT, b.eddy_viscosity_v, b.eddy_viscosity_v, b.sgs_model.length_scale_v)
 
     # Compute τij in PD.
     @. b.sgs[1][1] = 2 * b.eddy_viscosity_h * b.strain_rate[1][1]
