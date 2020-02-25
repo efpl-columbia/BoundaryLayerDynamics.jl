@@ -131,7 +131,8 @@ get_nz(gd::DistributedGrid, ns::NodeSet{:V}) = gd.nz_v
         zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
 
 abstract type BoundaryCondition{P<:ProcType,T} end
-struct DirichletBC{P,T} <: BoundaryCondition{P,T}
+abstract type SolidWallBC{P,T} <: BoundaryCondition{P,T} end
+struct DirichletBC{P,T} <: SolidWallBC{P,T}
     value::T
     buffer_fd::Array{Complex{T},2}
     buffer_pd::Array{T,2}
@@ -141,7 +142,7 @@ struct DirichletBC{P,T} <: BoundaryCondition{P,T}
         new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
         zeros(T, nh_pd...), proc_below(), proc_above())
 end
-DirichletBC(gd::DistributedGrid, value::T) where T =
+DirichletBC(value::T, gd::DistributedGrid) where T =
     DirichletBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
 struct NeumannBC{P,T} <: BoundaryCondition{P,T}
@@ -154,7 +155,7 @@ struct NeumannBC{P,T} <: BoundaryCondition{P,T}
         new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
         zeros(T, nh_pd...), proc_below(), proc_above())
 end
-NeumannBC(gd::DistributedGrid, value::T) where T =
+NeumannBC(value::T, gd::DistributedGrid) where T =
     NeumannBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
 """
@@ -174,12 +175,12 @@ struct UnspecifiedBC{P,T} <: BoundaryCondition{P,T}
         zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
 end
 
-bc_noslip(T, gd) = (DirichletBC(gd, zero(T)),
-                    DirichletBC(gd, zero(T)),
-                    DirichletBC(gd, zero(T)))
-bc_freeslip(T, gd) = (NeumannBC(gd, zero(T)),
-                      NeumannBC(gd, zero(T)),
-                    DirichletBC(gd, zero(T)))
+bc_noslip(T, gd) = (DirichletBC(zero(T), gd),
+                    DirichletBC(zero(T), gd),
+                    DirichletBC(zero(T), gd))
+bc_freeslip(T, gd) = (NeumannBC(zero(T), gd),
+                      NeumannBC(zero(T), gd),
+                    DirichletBC(zero(T), gd))
 
 layers(field::Array{T,3}) where T =
         Tuple(view(field, :, :, iz) for iz=1:size(field,3))

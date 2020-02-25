@@ -1,3 +1,5 @@
+# TODO: reconsider handling of diffusion term for rough walls
+
 @inline function add_diffusion_layer!(rhs, vel¯, vel⁰, vel⁺, coeff,
         df::DerivativeFactors, ::NodeSet) # (vel¯ - 2 vel⁰ + vel⁺) / δz²
     @. rhs += coeff * (vel¯ * df.dz2 + vel⁰ * (df.dx2 + df.dy2 - 2 * df.dz2) +
@@ -16,25 +18,25 @@ end
     rhs[1,1] += coeff * ubc.value * df.dz1
 end
 
-@inline function add_diffusion_layer!(rhs, lbc::DirichletBC, vel⁰, vel⁺, coeff,
+@inline function add_diffusion_layer!(rhs, lbc::SolidWallBC, vel⁰, vel⁺, coeff,
         df::DerivativeFactors, ::NodeSet{:H}) # (8/3 lbc - 4 vel⁰ + 4/3 vel⁺) / δz²
     @. rhs += coeff * (vel⁰ * (df.dx2 + df.dy2 - 4*df.dz2) + vel⁺ * (4*df.dz2/3))
     rhs[1,1] += coeff * lbc.value * (8*df.dz2/3)
 end
 
-@inline function add_diffusion_layer!(rhs, vel¯, vel⁰, ubc::DirichletBC, coeff,
+@inline function add_diffusion_layer!(rhs, vel¯, vel⁰, ubc::SolidWallBC, coeff,
         df::DerivativeFactors, ::NodeSet{:H}) # (4/3 vel¯ - 4 vel⁰ + 8/3 ubc) / δz²
     @. rhs += coeff * (vel⁰ * (df.dx2 + df.dy2 - 4*df.dz2) + vel¯ * (4*df.dz2/3))
     rhs[1,1] += coeff * ubc.value * (8*df.dz2/3)
 end
 
-@inline function add_diffusion_layer!(rhs, lbc::DirichletBC, vel⁰, vel⁺, coeff,
+@inline function add_diffusion_layer!(rhs, lbc::SolidWallBC, vel⁰, vel⁺, coeff,
         df::DerivativeFactors, ::NodeSet{:V}) # (lbc - 2 vel⁰ + vel⁺) / δz²
     @. rhs += coeff * (vel⁰ * (df.dx2 + df.dy2 - 2*df.dz2) + vel⁺ * df.dz2)
     rhs[1,1] += coeff * lbc.value * df.dz2
 end
 
-@inline function add_diffusion_layer!(rhs, vel¯, vel⁰, ubc::DirichletBC, coeff,
+@inline function add_diffusion_layer!(rhs, vel¯, vel⁰, ubc::SolidWallBC, coeff,
         df::DerivativeFactors, ::NodeSet{:V}) # (vel¯ - 2 vel⁰ + ubc) / δz²
     @. rhs += coeff * (vel⁰ * (df.dx2 + df.dy2 - 2*df.dz2) + vel¯ * df.dz2)
     rhs[1,1] += coeff * ubc.value * df.dz2

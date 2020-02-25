@@ -3,8 +3,9 @@ module ChannelFlow
 import LinearAlgebra, MPI, FFTW, TimerOutputs, OrdinaryDiffEq,
        RecursiveArrayTools, Printf, JSON
 
-export ChannelFlowProblem, closed_channel, open_channel, integrate!,
-       StaticSmagorinskiModel, RoughWallEquilibriumModel
+export closed_channel, open_channel, integrate!, StaticSmagorinskyModel,
+       ChannelFlowProblem, FreeSlipBoundary, SmoothWallBoundary, RoughWallBoundary,
+       set_velocity!
 
 include("transform.jl")
 include("advection.jl")

@@ -59,7 +59,7 @@ function test_pressure_solver(N)
 
     lbc = CF.bc_noslip(T, gd)
     ubc = CF.bc_freeslip(T, gd)
-    pbc = CF.DirichletBC(gd, zero(T))
+    pbc = CF.DirichletBC(zero(T), gd)
 
     df = CF.DerivativeFactors(gd, domain_size)
     ht = CF.HorizontalTransform(T, gd)
@@ -88,8 +88,8 @@ function test_pressure_solver(N)
     CF.set_field!(v, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:H))
     CF.set_field!(w, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:V))
     w_bc = convert(T, 0.5700899056030746) # random but same value everywhere
-    CF.solve_pressure!(p, (u,v,w), (lbc[1], lbc[2], CF.DirichletBC(gd, w_bc)),
-            (ubc[1], ubc[2], CF.DirichletBC(gd, w_bc)), pbc, df, ps)
+    CF.solve_pressure!(p, (u,v,w), (lbc[1], lbc[2], CF.DirichletBC(w_bc, gd)),
+            (ubc[1], ubc[2], CF.DirichletBC(w_bc, gd)), pbc, df, ps)
     CF.subtract_pressure_gradient!((u,v,w), p, df, pbc)
     CF.get_field!(w_pd, ht, w, CF.NodeSet(:V))
     @test w_pd ≈ w_bc * ones(T, size(w_pd))

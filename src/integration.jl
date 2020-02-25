@@ -31,38 +31,42 @@ end
 
 init_pressure(T, gd) = zeros_fd(T, gd, NodeSet(:H))
 
-BoundaryConditionSpec = Union{String,Pair}
-
-function init_bc(T, gd::DistributedGrid, spec::Pair)
-    if spec[1] == "Dirichlet"
-        DirichletBC(gd, convert(T, spec[2]))
-    elseif spec[1] == "Neumann"
-        NeumannBC(gd, convert(T, spec[2]))
-    else
-        error("Invalid boundary condition: " * spec)
-    end
+abstract type BoundaryDefinition end
+struct FreeSlipBoundary <: BoundaryDefinition end
+struct SmoothWallBoundary <: BoundaryDefinition end
+struct RoughWallBoundary <: BoundaryDefinition
+    roughness::Real
 end
 
-function init_bc(T, gd::DistributedGrid, spec::String)
-    if spec == "Dirichlet"
-        DirichletBC(gd, zero(T))
-    elseif spec == "Neumann"
-        NeumannBC(gd, zero(T))
-    else
-        error("Invalid boundary condition: " * spec)
-    end
-end
+solid_wall(roughness::Nothing) = SmoothWallBoundary()
+solid_wall(roughness::Real) = RoughWallBoundary(roughness)
 
-init_bcs(T, gd::DistributedGrid, specs::NTuple{3,BoundaryConditionSpec}) =
-    Tuple(init_bc(T, gd, spec) for spec=specs)
+init_bcs(bc::FreeSlipBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
+        (NeumannBC(zero(T), gd), NeumannBC(zero(T), gd), DirichletBC(zero(T), gd))
+
+init_bcs(bc::SmoothWallBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
+        (DirichletBC(zero(T), gd), DirichletBC(zero(T), gd), DirichletBC(zero(T), gd))
+
+init_bcs(bc::RoughWallBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
+        (RoughWallEquilibriumBC(convert(T, bc.roughness), gd, ds),
+         RoughWallEquilibriumBC(convert(T, bc.roughness), gd, ds),
+         DirichletBC(zero(T), gd))
+
+init_bcs(bcs::NTuple{3,Union{String,Pair}}, gd::DistributedGrid,
+         ds::NTuple{3,T}) where T = map(bcs) do bc
+    t, val = bc isa String ? (bc, zero(T)) : (bc[1], convert(T, bc[2]))
+    t == "Dirichlet" && return DirichletBC(val, gd)
+    t == "Neumann" && return NeumannBC(val, gd)
+    @error "Invalid boundary condition" bc
+end
 
 bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
 bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
 
-init_advection(T, gd, ds, sgs::Nothing, wm::Nothing) =
+init_advection(T, gd, ds, sgs::Nothing) =
         AdvectionBuffers(T, gd, ds)
-init_advection(T, gd, ds, sgs::StaticSmagorinskiModel, wm::RoughWallEquilibriumModel) =
-        FilteredAdvectionBuffers(T, gd, ds, sgs, wm)
+init_advection(T, gd, ds, sgs::StaticSmagorinskyModel) =
+        FilteredAdvectionBuffers(T, gd, ds, sgs)
 
 struct ChannelFlowProblem{P,T}
     velocity::NTuple{3,Array{Complex{T},3}}
@@ -82,9 +86,9 @@ struct ChannelFlowProblem{P,T}
     constant_flux::Bool
 
     ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T},
-        initial_conditions::NTuple{3,Function}, lower_bcs::NTuple{3,BoundaryConditionSpec},
-        upper_bcs::NTuple{3,BoundaryConditionSpec}, diffusion_coeff::T, forcing::NTuple{2,T},
-        constant_flux::Bool; sgs_model = nothing, wall_model = nothing) where {T<:SupportedReals} = begin
+        initial_conditions::NTuple{3,Function}, lower_bcs, upper_bcs,
+        diffusion_coeff::T, forcing::NTuple{2,T}, constant_flux::Bool;
+        sgs_model = nothing) where {T<:SupportedReals} = begin
 
         pressure_solver_batch_size = 64
 
@@ -96,14 +100,49 @@ struct ChannelFlowProblem{P,T}
             init_velocity(gd, ht, initial_conditions, domain_size),
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
-            gd, domain_size, ht, df, init_advection(T, gd, domain_size, sgs_model, wall_model),
-            init_bcs(T, gd, lower_bcs), init_bcs(T, gd, upper_bcs), UnspecifiedBC(T, gd),
+            gd, domain_size, ht, df, init_advection(T, gd, domain_size, sgs_model),
+            init_bcs(lower_bcs, gd, domain_size), init_bcs(upper_bcs, gd, domain_size), UnspecifiedBC(T, gd),
             prepare_pressure_solver(gd, df, pressure_solver_batch_size),
             diffusion_coeff, forcing, constant_flux)
     end
 end
 
 zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
+
+# TODO: remove initial conditions from ChannelFlowProblem above
+
+prepare_ics(vel::Real) = ((x1,x2,x3)->vel, (x1,x2,x3)->0, (x1,x2,x3)->0)
+prepare_ics(velh::Tuple{Real,Real}) = ((x1,x2,x3)->vel[1], (x1,x2,x3)->vel[2], (x1,x2,x3)->0)
+prepare_ics(vel::Function) = (vel, (x1,x2,x3)->0, (x1,x2,x3)->0)
+prepare_ics(velh::Tuple{Function,Function}) = (vel[1], vel[2], (x1,x2,x3)->0)
+prepare_ics(vels::NTuple{3,Function}) = vels
+
+function set_velocity!(vel, ht::HorizontalTransform, f::NTuple{3,Function}, gd::DistributedGrid, ds::NTuple{3,T}) where T
+    δ = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+    set_field!(vel[1], ht, f[1], δ, gd.iz_min, NodeSet(:H))
+    set_field!(vel[2], ht, f[2], δ, gd.iz_min, NodeSet(:H))
+    set_field!(vel[3], ht, f[3], δ, gd.iz_min, NodeSet(:V))
+    vel
+end
+
+function add_noise!(vel::AbstractArray{Complex{T},3}, intensity::T = one(T) / 8) where T
+    intensity == 0 && return vel
+    for k=1:size(vel, 3)
+        σ = real(vel[1,1,k]) * intensity
+        for j=1:size(vel, 2), i=1:size(vel, 1)
+            if !(i == j == 1) # do not modify mean flow
+                vel[i,j,k] += σ * randn(Complex{T})
+            end
+        end
+    end
+    vel
+end
+
+function set_velocity!(cf::ChannelFlowProblem{P,T}, vel; noise_intensity = 0) where {P,T}
+    set_velocity!(cf.velocity, cf.transform, prepare_ics(vel), cf.grid, cf.domain_size)
+    add_noise!.(cf.velocity, convert(T, noise_intensity))
+    cf
+end
 
 open_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
         constant_flux = false) = ChannelFlowProblem(grid_size, (domain[1], domain[2],
@@ -136,20 +175,6 @@ function show_all(io::IO, to::TimerOutputs.TimerOutput)
     else
         show(io, to)
         println(io) # newline is missing in show(to)
-    end
-end
-
-function add_noise!(cf::ChannelFlowProblem{P,T}, intensity::T = one(T) / 8) where {P,T}
-    for v=1:3
-        vel = cf.velocity[v]
-        for k=1:size(vel, 3)
-            σ = real(vel[1,1,k]) * intensity
-            for j=1:size(vel, 2), i=1:size(vel, 1)
-                if !(i == j == 1) # do not modify mean flow
-                    vel[i,j,k] += σ * randn(Complex{T})
-                end
-            end
-        end
     end
 end
 

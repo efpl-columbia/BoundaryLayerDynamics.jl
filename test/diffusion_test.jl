@@ -16,10 +16,10 @@ function test_diffusion(NZ)
     Lu0n = (x,y,z) -> - (cos(x) + sin(y) + 2)
 
     # set up boundary conditions with random value to test non-zero bc
-    bcd1 = CF.DirichletBC(gd, rval)
-    bcd2 = CF.DirichletBC(gd, rval)
-    bcn1 = CF.NeumannBC(gd, 1.0 + rval)
-    bcn2 = CF.NeumannBC(gd, -1.0 + rval)
+    bcd1 = CF.DirichletBC(rval, gd)
+    bcd2 = CF.DirichletBC(rval, gd)
+    bcn1 = CF.NeumannBC(1.0 + rval, gd)
+    bcn2 = CF.NeumannBC(-1.0 + rval, gd)
 
     rhsh_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:H))
     rhsv_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:V))

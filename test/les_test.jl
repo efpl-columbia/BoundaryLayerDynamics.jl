@@ -1,18 +1,17 @@
 function test_closed_channel_les(n)
 
+    z0 = 5e-3
     u1, u2 = 0.64917, 0.18572
     gs = (n, n, n)
     ds = (2*π, 4/3*π, 2.0)
     ic = ((x,y,z)->u1, (x,y,z)->u2, (x,y,z)->0.0)
-    lbcs = CF.bc_noslip()
-    ubcs = CF.bc_noslip()
+    lbcs = RoughWallBoundary(z0)
+    ubcs = RoughWallBoundary(z0)
     Re = 1e5
     f = (1.0, 0.0)
-    z0 = 5e-3
 
     cfp = ChannelFlowProblem(gs, ds, ic, lbcs, ubcs, 1/Re, f, false,
-                             sgs_model = StaticSmagorinskiModel(),
-                             wall_model = RoughWallEquilibriumModel(z0=z0))
+                             sgs_model = StaticSmagorinskyModel())
 
     # compute advection term for constant velocity
     CF.set_advection!(cfp.rhs, cfp.velocity, cfp.derivatives, cfp.transform,
@@ -57,5 +56,28 @@ function test_closed_channel_les(n)
 
 end
 
+function test_open_channel_les(n)
+
+    z0 = 5e-3
+    u1, u2 = 0.64917, 0.18572
+    gs = (n, n, n)
+    ds = (2*π, 4/3*π, 1.0)
+    ic = ((x,y,z)->u1, (x,y,z)->u2, (x,y,z)->0.0)
+    lbcs = RoughWallBoundary(z0)
+    ubcs = FreeSlipBoundary()
+    Re = 1e5
+    f = (1.0, 0.0)
+
+    cfp = ChannelFlowProblem(gs, ds, ic, lbcs, ubcs, 1/Re, f, false,
+                             sgs_model = StaticSmagorinskyModel())
+
+    # check thar integration runs without error
+    dt = 1e-3
+    nt = 10
+    integrate!(cfp, dt, nt, verbose=false)
+
+end
+
 # TODO: also run with one layer per process
 test_closed_channel_les(16)
+test_open_channel_les(16)

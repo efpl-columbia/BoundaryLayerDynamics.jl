@@ -1,10 +1,27 @@
-struct StaticSmagorinskiModel{T}
-    model_constant::T
-end
-
-struct RoughWallEquilibriumModel{T}
+struct RoughWallEquilibriumBC{P,T} <: SolidWallBC{P,T}
+    value::T # set to 0, so it can be used just like a DirichletBC
     roughness_length::T
     von_karman_constant::T
+    wall_distance::T
+    buffer_fd::Array{Complex{T},2}
+    buffer_pd::Array{T,2}
+    neighbor_below::Int
+    neighbor_above::Int
+    RoughWallEquilibriumBC(roughness_length::T, von_karman_constant::T, wall_distance::T,
+                           nh_fd::Tuple{Int,Int}, nh_pd::Tuple{Int,Int}) where T = begin
+        @assert wall_distance > roughness_length "Roughness length is larger than distance to first grid point"
+        new{proc_type(),T}(zero(T), roughness_length, von_karman_constant, wall_distance,
+                           zeros(Complex{T}, nh_fd...), zeros(T, nh_pd...), proc_below(), proc_above())
+    end
+end
+
+RoughWallEquilibriumBC(roughness_length::T, gd::DistributedGrid,
+                       ds::NTuple{3,T}; kappa::T = convert(T, 0.4)) where T =
+                       RoughWallEquilibriumBC(roughness_length, kappa,
+                       ds[3] / (2*gd.nz_global), (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
+
+struct StaticSmagorinskyModel{T}
+    model_constant::T
 end
 
 struct FilteredAdvectionBuffers{T,P}
@@ -21,8 +38,7 @@ struct FilteredAdvectionBuffers{T,P}
     strain_rate::NTuple{3,NTuple{3,Array{T,3}}}
     strain_bcs::NTuple{2,UnspecifiedBC{P,T}}
 
-    sgs_model::StaticSmagorinskiModel{T}
-    wall_model::RoughWallEquilibriumModel{T}
+    sgs_model::StaticSmagorinskyModel{T}
     eddy_viscosity_h::Array{T,3}
     eddy_viscosity_v::Array{T,3}
     sgs::NTuple{3,NTuple{3,Array{T,3}}}
@@ -36,7 +52,7 @@ struct FilteredAdvectionBuffers{T,P}
     filter_width::Tuple{T,T,T}
     grid_spacing::Tuple{T,T,T}
 
-    function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, sgs_model, wall_model)
+    function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, sgs_model)
 
         # velocity and gradients
         vel = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
@@ -73,12 +89,12 @@ struct FilteredAdvectionBuffers{T,P}
         grid_spacing = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
 
         new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_bcs,
-                 sgs_model, wall_model, eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv,
+                 sgs_model, eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv,
                  filter_width, grid_spacing)
     end
 end
 
-StaticSmagorinskiModel(; Cs = 0.1) = StaticSmagorinskiModel(Cs)
+StaticSmagorinskyModel(; Cs = 0.1) = StaticSmagorinskyModel(Cs)
 
 RoughWallEquilibriumModel(; z0 = 1e-3, kappa = 0.4) = RoughWallEquilibriumModel(z0, kappa)
 
@@ -129,9 +145,10 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     # Compute eddy viscosity on both sets of nodes
     L = b.sgs_model.model_constant * cbrt(prod(b.filter_width))
     νT(SijSij) = L^2 * sqrt(2*SijSij)
-    SijSij!((b.eddy_viscosity_h, b.eddy_viscosity_v), b.strain_rate, b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.dz1)
-    b.eddy_viscosity_h .= νT.(b.eddy_viscosity_h)
-    b.eddy_viscosity_v .= νT.(b.eddy_viscosity_v)
+    SijSij!((b.eddy_viscosity_h, b.eddy_viscosity_v), b.strain_rate,
+            b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.dz1)
+    map!(νT, b.eddy_viscosity_h, b.eddy_viscosity_h)
+    map!(νT, b.eddy_viscosity_v, b.eddy_viscosity_v)
 
     # Compute τij in PD.
     @. b.sgs[1][1] = 2 * b.eddy_viscosity_h * b.strain_rate[1][1]
@@ -142,56 +159,14 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     @. b.sgs[2][3] = 2 * b.eddy_viscosity_v * b.strain_rate[2][3]
 
     # Add values of dτi3/dx3 to the resolved part of the non-linear term.
-    function apply_wall_model(τ, vel, wm)
-
-        x3ref = 1 / (2 * df.dz1) # height of first H-node, note that dz1 is 1/Δz
-        @assert x3ref > wm.roughness_length "Roughness length is larger than distance to first grid point"
-
-        @assert length(τ) >= 2
-
-        first = τ[1]
-        last  = τ[end]
-
-        wall_model(u1, u2, u3_below, u3_above, ui) = wm.von_karman_constant^2 * ui / log(x3ref/wm.roughness_length)^2 *
-                sqrt(u1^2 + u2^2 + (u3_below/2+u3_above/2)^2)
-
-        if first isa UnspecifiedBC
-            @assert lower_bcs[1] isa DirichletBC && lower_bcs[2].value == 0 &&
-                    lower_bcs[2] isa DirichletBC && lower_bcs[2].value == 0
-            broadcast!(wall_model, first.buffer_pd, first_layer(b.vel[1]), first_layer(b.vel[2]),
-                lower_bcs[3].value, first_layer(b.vel[3]), first_layer(vel))
-            first = first.buffer_pd
-        end
-
-        if last isa UnspecifiedBC
-            @assert upper_bcs[1] isa DirichletBC && upper_bcs[2].value == 0 &&
-                    upper_bcs[2] isa DirichletBC && upper_bcs[2].value == 0
-            # TODO: handle case where the top process doesn’t have any w-velocity
-            broadcast!(wall_model, last.buffer_pd, last_layer(b.vel[1]), last_layer(b.vel[2]),
-                last_layer(b.vel[3]), upper_bcs[3].value, last_layer(vel))
-            last.buffer_pd .*= -1
-            last = last.buffer_pd
-        end
-
-        return first, τ[2:end-1]..., last
-
-    end
-
-    add_dx3!(f_out, f_below, f_above) = @. f_out += (f_above - f_below) * df.dz1
-    add_dx3!(f_out, bc::UnspecifiedBC, _) = @. f_out += error("Cannot compute derivative without BC")
-    add_dx3!(f_out, _, bc::UnspecifiedBC) = @. f_out += error("Cannot compute derivative without BC")
-
-    # TODO: rename BCs or use different ones
     τ13 = layers_expand_half_v(b.sgs[1][3], b.sgs_bcs[1], b.sgs_bcs[2])
-    τ13 = apply_wall_model(τ13, b.vel[1], b.wall_model)
-    map(add_dx3!, layers(b.adv[1]), τ13[1:end-1], τ13[2:end]) # relies on wall model
-
+    τ13 = apply_wall_model(τ13, lower_bcs[1], b.vel[1], upper_bcs[1], b.vel, (lower_bcs[3], upper_bcs[3]))
+    broadcast(add_dx3!, layers(b.adv[1]), τ13[1:end-1], τ13[2:end], df.dz1) # relies on wall model
     τ23 = layers_expand_half_v(b.sgs[2][3], b.sgs_bcs[3], b.sgs_bcs[4])
-    τ23 = apply_wall_model(τ23, b.vel[2], b.wall_model)
-    map(add_dx3!, layers(b.adv[2]), τ23[1:end-1], τ23[2:end]) # relies on wall model
-
+    τ23 = apply_wall_model(τ23, lower_bcs[2], b.vel[2], upper_bcs[2], b.vel, (lower_bcs[3], upper_bcs[3]))
+    broadcast(add_dx3!, layers(b.adv[2]), τ23[1:end-1], τ23[2:end], df.dz1) # relies on wall model
     τ33 = layers_expand_half_h(b.sgs[3][3], b.sgs_bcs[5])
-    map(add_dx3!, layers(b.adv[3]), τ33[1:end-1], τ33[2:end])
+    broadcast(add_dx3!, layers(b.adv[3]), τ33[1:end-1], τ33[2:end], df.dz1)
 
     # Transform these terms back to FD (8 terms)
     # NOTE: τ33 is not needed in FD, and τ21 == τ12
@@ -202,7 +177,7 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     set_field!(b.sgs_fd[1][3], ht, b.sgs[1][3], NodeSet(:V))
     set_field!(b.sgs_fd[2][3], ht, b.sgs[2][3], NodeSet(:V))
 
-    # 7) Add horizontal contributions of stress divergence to RHS
+    # Add horizontal contributions of stress divergence to RHS
     @. adv[1] += b.sgs_fd[1][1] * df.dx1 + b.sgs_fd[1][2] * df.dy1
     @. adv[2] += b.sgs_fd[2][1] * df.dx1 + b.sgs_fd[2][2] * df.dy1
     @. adv[3] += b.sgs_fd[3][1] * df.dx1 + b.sgs_fd[3][2] * df.dy1
@@ -222,7 +197,8 @@ end
 
 # one-sided differences for the second-order derivatives du1/dx3 & du2/dx3 at the wall
 # (du/dx)(x=0) = (− u(1.5Δ) + 9 u(0.5Δ) − 8 u(0)) / (3 Δ) + O(Δ²)
-function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::DirichletBC, vel_h1, vel_h2, D3) # D3 is 1/Δx3
+function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::RoughWallEquilibriumBC, vel_h1, vel_h2, D3) # D3 is 1/Δx3
+    # TODO: this should be based on the log law, strictly speaking…
     @. dx3.buffer_pd = D3 * (- vel_h2 + 9 * vel_h1 - 8 * vel_bc.value) / 3
     dx3.buffer_pd
 end
@@ -272,6 +248,30 @@ function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, D3)
 
     SijSij_h, SijSij_v
 end
+
+function wall_model(τi3, vel_bc::RoughWallEquilibriumBC, vel_h1, u1, u2, u3_below, u3_above, prefactor = 1)
+    @. τi3.buffer_pd = vel_bc.von_karman_constant^2 / log(vel_bc.wall_distance/vel_bc.roughness_length)^2 *
+            prefactor * vel_h1 * sqrt(u1^2 + u2^2 + (u3_below/2+u3_above/2)^2)
+    τi3.buffer_pd
+end
+
+function wall_model(τi3, vel_bc::NeumannBC, args...)
+    @assert vel_bc.value == 0 "Wall model for non-zero Neumann BC not implemented" vel_bc.value
+    vel_bc.value
+end
+
+function apply_wall_model(τi3::Tuple, lbc, vel, ubc, vels, (u3_lbc, u3_ubc))
+    first = τi3[1] isa UnspecifiedBC ? wall_model(τi3[1], lbc, first_layer(vel),
+            first_layer(vels[1]), first_layer(vels[2]), u3_lbc.value, first_layer(vels[3])) : τi3[1]
+    # TODO: handle case where u3 has no local layer (i.e. last_layer(vels[3]) fails)
+    last = τi3[end] isa UnspecifiedBC ? wall_model(τi3[end], ubc, last_layer(vel),
+            last_layer(vels[1]), last_layer(vels[2]), u3_ubc.value, last_layer(vels[3]), -1) : τi3[end]
+    first, τi3[2:end-1]..., last
+end
+
+add_dx3!(f_out, f_below, f_above, D3) = @. f_out += (f_above - f_below) * D3
+add_dx3!(f_out, bc::UnspecifiedBC, _, D3) = @error "Cannot compute derivative without BC"
+add_dx3!(f_out, _, bc::UnspecifiedBC, D3) = @error "Cannot compute derivative without BC"
 
 
 # HELPER FUNCTIONS (TODO: merge with other functions in other files)
@@ -376,7 +376,7 @@ function layers_expand_half_h(field::AbstractArray{T}, bc_above::BoundaryConditi
         l
 
     else
-        @error "Invalid process type: $(P)"
+        @error "Invalid process type" P
     end
 end
 
@@ -419,6 +419,6 @@ function layers_expand_half_v(field::AbstractArray{T}, bc_below::BoundaryConditi
         buffer_below, l..., bc_above
 
     else
-        @error "Invalid process type: $(P)"
+        @error "Invalid process type" P
     end
 end
