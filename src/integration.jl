@@ -63,10 +63,10 @@ end
 bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
 bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
 
-init_advection(T, gd, ds, sgs::Nothing) =
+init_advection(T, gd, ds, lbcs, ubcs, sgs::Nothing) =
         AdvectionBuffers(T, gd, ds)
-init_advection(T, gd, ds, sgs::StaticSmagorinskyModel) =
-        FilteredAdvectionBuffers(T, gd, ds, sgs)
+init_advection(T, gd, ds, lbcs, ubcs, sgs::StaticSmagorinskyModel) =
+        FilteredAdvectionBuffers(T, gd, ds, lbcs, ubcs, sgs)
 
 struct ChannelFlowProblem{P,T}
     velocity::NTuple{3,Array{Complex{T},3}}
@@ -95,13 +95,15 @@ struct ChannelFlowProblem{P,T}
         gd = DistributedGrid(grid_size...)
         ht = HorizontalTransform(T, gd)
         df = DerivativeFactors(gd, domain_size)
+        lbcs = init_bcs(lower_bcs, gd, domain_size)
+        ubcs = init_bcs(upper_bcs, gd, domain_size)
 
         new{proc_type(),T}(
             init_velocity(gd, ht, initial_conditions, domain_size),
             init_pressure(T, gd),
             init_velocity_fields(T, gd),
-            gd, domain_size, ht, df, init_advection(T, gd, domain_size, sgs_model),
-            init_bcs(lower_bcs, gd, domain_size), init_bcs(upper_bcs, gd, domain_size), UnspecifiedBC(T, gd),
+            gd, domain_size, ht, df, init_advection(T, gd, domain_size, lbcs, ubcs, sgs_model),
+            lbcs, ubcs, UnspecifiedBC(T, gd),
             prepare_pressure_solver(gd, df, pressure_solver_batch_size),
             diffusion_coeff, forcing, constant_flux)
     end

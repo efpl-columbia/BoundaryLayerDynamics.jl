@@ -20,20 +20,43 @@ RoughWallEquilibriumBC(roughness_length::T, gd::DistributedGrid,
                        RoughWallEquilibriumBC(roughness_length, kappa,
                        ds[3] / (2*gd.nz_global), (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
-struct StaticSmagorinskyModel{T}
-    model_constant::T
+struct StaticSmagorinskyModel{T1,T2}
+    model_constant::T1
+    wall_damping::Bool
+    wall_damping_exponent::T2
 end
+
+StaticSmagorinskyModel(; Cs = 0.1, wall_damping=false, wall_damping_exponent=2) =
+        StaticSmagorinskyModel(Cs, wall_damping, wall_damping_exponent)
+
+i3range(gd, ::NodeSet{:H}) = gd.iz_min:(gd.iz_min + gd.nz_h - 1)
+i3range(gd, ::NodeSet{:V}) = gd.iz_min:(gd.iz_min + gd.nz_v - 1)
+x3range(gd, L3, ns::NodeSet{:H}) = (L3 / gd.nz_global) * (i3range(gd, ns).-1/2)
+x3range(gd, L3, ns::NodeSet{:V}) = (L3 / gd.nz_global) * i3range(gd, ns)
+mixing_length(x3, bcs::Tuple{NeumannBC,NeumannBC,DirichletBC}) = Inf
+mixing_length(x3, bcs::Tuple{RoughWallEquilibriumBC,RoughWallEquilibriumBC,DirichletBC}) =
+        x3 * equivalently(bcs[1].von_karman_constant, bcs[2].von_karman_constant)
+mixing_length(x3, L3, lbcs, ubcs) = min(mixing_length(x3, lbcs), mixing_length(L3-x3, ubcs))
 
 struct StaticSmagorinskyBuffers{T}
     length_scale_h::Array{T,3}
     length_scale_v::Array{T,3}
-    StaticSmagorinskyBuffers(sgs_model::StaticSmagorinskyModel{T}, gd, ds) where T = begin
+    StaticSmagorinskyBuffers(sgs_model::StaticSmagorinskyModel{T}, gd, ds, lbcs, ubcs) where T = begin
         # TODO: check whether this is the correct way of defining the filter width
         Δ = ds ./ (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
         L = sgs_model.model_constant * cbrt(prod(Δ))
-        Lh = L * ones(1,1,gd.nz_h)
-        Lv = L * ones(1,1,gd.nz_v)
-        new{T}(Lh, Lv)
+        Lh = L * ones(gd.nz_h)
+        Lv = L * ones(gd.nz_v)
+
+        if sgs_model.wall_damping
+            Lh_wall = broadcast!(mixing_length, similar(Lh), x3range(gd, ds[3], NodeSet(:H)), ds[3], (lbcs,), (ubcs,))
+            Lv_wall = broadcast!(mixing_length, similar(Lv), x3range(gd, ds[3], NodeSet(:V)), ds[3], (lbcs,), (ubcs,))
+            N = sgs_model.wall_damping_exponent
+            @. Lh = (Lh^(-N) + Lh_wall^(-N))^(-1/N)
+            @. Lv = (Lv^(-N) + Lv_wall^(-N))^(-1/N)
+        end
+
+        new{T}(reshape(Lh, (1,1,gd.nz_h)), reshape(Lv, (1,1,gd.nz_v)))
     end
 end
 
@@ -64,7 +87,7 @@ struct FilteredAdvectionBuffers{T,P}
 
     grid_spacing::Tuple{T,T,T}
 
-    function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, sgs_model)
+    function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, lower_bcs, upper_bcs, sgs_model)
 
         # velocity and gradients
         vel = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
@@ -99,12 +122,10 @@ struct FilteredAdvectionBuffers{T,P}
         grid_spacing = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
 
         new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_bcs,
-                StaticSmagorinskyBuffers(sgs_model, gd, domain_size), eddy_viscosity_h, eddy_viscosity_v,
-                sgs, sgs_fd, sgs_bcs, adv, grid_spacing)
+                StaticSmagorinskyBuffers(sgs_model, gd, domain_size, lower_bcs, upper_bcs),
+                eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv, grid_spacing)
     end
 end
-
-StaticSmagorinskyModel(; Cs = 0.1) = StaticSmagorinskyModel(Cs)
 
 RoughWallEquilibriumModel(; z0 = 1e-3, kappa = 0.4) = RoughWallEquilibriumModel(z0, kappa)
 
