@@ -2,7 +2,13 @@ const CBD_MAGIC_NUMBER = hex2bytes("CBDF")
 const CBD_VERSION = 1
 
 function sequential_open(f, filename, mode)
+
     id, N = proc_info()
+    if id == 1 && !(mode in ("r", "r+"))
+        mkpath(dirname(filename))
+    end
+    MPI.Initialized() && MPI.Barrier(MPI.COMM_WORLD)
+
     r = nothing
     for i=1:N
         if i == id
@@ -191,7 +197,6 @@ function next_snapshot_time(output::OutputCache)
 end
 
 function write_state(dir, state, mapping, transform, shift_factors)
-    mkpath(dir)
     write_field(joinpath(dir, "u.cbd"), state[1], mapping, transform, shift_factors, NodeSet(:H))
     write_field(joinpath(dir, "v.cbd"), state[2], mapping, transform, shift_factors, NodeSet(:H))
     write_field(joinpath(dir, "w.cbd"), state[3], mapping, transform, shift_factors, NodeSet(:V))

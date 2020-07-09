@@ -66,8 +66,11 @@ function gather_profiles(profiles::MeanProfiles)
     # NOTE: calls to "Gatherv" need an array of Cints
     nz_h, nz_v = Cint(equivalently(length(profiles.vel[1]), length(profiles.vel[2]))),
                  Cint(length(profiles.vel[3]))
-    counts_h = MPI.Initialized() ? MPI.Gather(nz_h, 0, MPI.COMM_WORLD) : Cint[nz_h]
-    counts_v = MPI.Initialized() ? MPI.Gather(nz_v, 0, MPI.COMM_WORLD) : Cint[nz_v]
+    # NOTE: the counts should only be required at the root process, but since
+    # the current MPI.jl implementation of Gatherv (used below) requires the
+    # count at all processes, we use Allgather here instead of Gather
+    counts_h = MPI.Initialized() ? MPI.Allgather(nz_h, MPI.COMM_WORLD) : Cint[nz_h]
+    counts_v = MPI.Initialized() ? MPI.Allgather(nz_v, MPI.COMM_WORLD) : Cint[nz_v]
 
     gather_profile(p, c) = MPI.Initialized() ? MPI.Gatherv(p, c, 0, MPI.COMM_WORLD) : p
 

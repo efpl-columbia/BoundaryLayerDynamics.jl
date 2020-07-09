@@ -120,11 +120,11 @@ end
 
 function progressbar(p::Integer)
     0 <= p <= 100 || error("Progress has to be a percentage.")
-    "│" *
+    "▕" *
     repeat('█', div(p, 4)) *
     (mod(p,4) == 3 ? "▊" : mod(p,4) == 2 ? "▌" : mod(p,4) == 1 ? "▎" : "") *
     repeat(' ', div(100 - p, 4)) *
-    "│" *
+    "▏" *
     " " * string(p) * "%"
 end
 

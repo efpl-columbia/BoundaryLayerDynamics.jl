@@ -40,18 +40,19 @@ end
 function gather_spectra(spectra::MeanSpectra)
     Eij_k1 = gather_along_last_dimension(spectra.Eij_k1)
     Eij_k2 = gather_along_last_dimension(spectra.Eij_k2)
-    Dict("E11_k1" => view(Eij_k1, :, spectra.indices[1][1], :),
-         "E22_k1" => view(Eij_k1, :, spectra.indices[2][2], :),
-         "E33_k1" => view(Eij_k1, :, spectra.indices[3][3], :),
-         "E13_k1" => view(Eij_k1, :, spectra.indices[1][3], :),
-         "E23_k1" => view(Eij_k1, :, spectra.indices[2][3], :),
-         "E12_k1" => view(Eij_k1, :, spectra.indices[1][2], :),
-         "E11_k2" => view(Eij_k2, :, spectra.indices[1][1], :),
-         "E22_k2" => view(Eij_k2, :, spectra.indices[2][2], :),
-         "E33_k2" => view(Eij_k2, :, spectra.indices[3][3], :),
-         "E13_k2" => view(Eij_k2, :, spectra.indices[1][3], :),
-         "E23_k2" => view(Eij_k2, :, spectra.indices[2][3], :),
-         "E12_k2" => view(Eij_k2, :, spectra.indices[1][2], :),)
+    get_spectra(Eij, i, j) = isnothing(Eij) ? nothing : view(Eij, :, spectra.indices[i][j], :)
+    Dict("E11_k1" => get_spectra(Eij_k1, 1, 1),
+         "E22_k1" => get_spectra(Eij_k1, 2, 2),
+         "E33_k1" => get_spectra(Eij_k1, 3, 3),
+         "E13_k1" => get_spectra(Eij_k1, 1, 3),
+         "E23_k1" => get_spectra(Eij_k1, 2, 3),
+         "E12_k1" => get_spectra(Eij_k1, 1, 2),
+         "E11_k2" => get_spectra(Eij_k2, 1, 1),
+         "E22_k2" => get_spectra(Eij_k2, 2, 2),
+         "E33_k2" => get_spectra(Eij_k2, 3, 3),
+         "E13_k2" => get_spectra(Eij_k2, 1, 3),
+         "E23_k2" => get_spectra(Eij_k2, 2, 3),
+         "E12_k2" => get_spectra(Eij_k2, 1, 2),)
 end
 
 function reset!(spectra::MeanSpectra)
@@ -64,10 +65,13 @@ function gather_along_last_dimension(A)
     MPI.Initialized() || return A
 
     # NOTE: calls to "Gatherv" need an array of Cints
-    counts = MPI.Gather(Cint(length(A)), 0, MPI.COMM_WORLD)
+    counts = MPI.Allgather(Cint(length(A)), MPI.COMM_WORLD)
+    # NOTE: the counts should only be required at the root process, but since
+    # the current MPI.jl implementation of Gatherv (used below) requires the
+    # count at all processes, we use Allgather here instead of Gather
     A_global = MPI.Gatherv(A[:], counts, 0, MPI.COMM_WORLD)
 
-    reshape(A_global, size(A)[1:end-1]..., :)
+    isnothing(A_global) ? nothing : reshape(A_global, size(A)[1:end-1]..., :)
 end
 
 zdot(z1, z2) = real(z1) * real(z2) + imag(z1) * imag(z2)
