@@ -1,38 +1,3 @@
-# compute one layer of vorticity (in frequency domain)
-# (dw/dy - dv/dz) and (du/dz - dw/dx) on w-nodes, (dv/dx - du/dy) on uvp-nodes
-@inline rotu!(rotu, v¯, v⁺, w, dy, dz) = @. rotu = w * dy - (v⁺ - v¯) * dz
-@inline rotv!(rotv, u¯, u⁺, w, dx, dz) = @. rotv = (u⁺ - u¯) * dz - w * dx
-@inline rotw!(rotw, u, v, dx, dy)      = @. rotw = v * dx - u * dy
-
-function rotu!(rotu_layers::NTuple{IZV}, v_layers::NTuple{IZH}, w_layers::NTuple{IZV},
-        df::DerivativeFactors, upper_bcv::BoundaryCondition) where {IZH,IZV}
-    v_above = get_layer_above(v_layers, upper_bcv)
-    for i=1:IZH-1
-        rotu!(rotu_layers[i], v_layers[i], v_layers[i+1], w_layers[i], df.dy1, df.dz1)
-    end
-    if IZH == IZV # this is not the case for the process at the top of the domain
-        rotu!(rotu_layers[IZV], v_layers[IZH], v_above, w_layers[IZV], df.dy1, df.dz1)
-    end
-end
-
-function rotv!(rotv_layers::NTuple{IZV}, u_layers::NTuple{IZH}, w_layers::NTuple{IZV},
-        df::DerivativeFactors, upper_bcu::BoundaryCondition) where {IZH,IZV}
-    u_above = get_layer_above(u_layers, upper_bcu)
-    for i=1:IZH-1
-        rotv!(rotv_layers[i], u_layers[i], u_layers[i+1], w_layers[i], df.dx1, df.dz1)
-    end
-    if IZH == IZV # this is not the case for the process at the top of the domain
-        rotv!(rotv_layers[IZV], u_layers[IZH], u_above, w_layers[IZV], df.dx1, df.dz1)
-    end
-end
-
-function rotw!(rotw_layers::NTuple{IZH}, u_layers::NTuple{IZH}, v_layers::NTuple{IZH},
-        df::DerivativeFactors) where {IZH,IZV}
-    for i=1:IZH
-        rotw!(rotw_layers[i], u_layers[i], v_layers[i], df.dx1, df.dy1)
-    end
-end
-
 # compute one layer of -(roty[w]*w[w]-rotz[uvp]*v[uvp]) on uvp-nodes
 @inline advu!(advu, v, rotv¯, rotv⁺, w¯, w⁺, rotw) =
         @. advu = rotw * v - 0.5 * (rotv¯ * w¯ + rotv⁺ * w⁺)
@@ -132,97 +97,71 @@ function advw!(advw_layers::NTuple{IZV},
                                           v_layers[IZH], v_above, rotv_layers[IZV])
 end
 
+function local_grid_spacing(gd, gm::GridMapping{T}) where {T}
+    dx1 = gm.hsize1 / gd.nx_pd
+    dx2 = gm.hsize2 / gd.nx_pd
+    dζ = 1 / gd.nz_global
+    ζi = vrange(T, gd, NodeSet(:V))
+    dx3dζ = gm.Dvmap.(ζi)
+    dx3 = dx3dζ * dζ
+    (dx1, dx2, dx3)
+end
+
 struct AdvectionBuffers{T}
-    rotu_fd::Array{Complex{T},3}
-    rotv_fd::Array{Complex{T},3}
-    rotw_fd::Array{Complex{T},3}
-    u_pd::Array{T,3}
-    v_pd::Array{T,3}
-    w_pd::Array{T,3}
-    rotu_pd::Array{T,3}
-    rotv_pd::Array{T,3}
-    rotw_pd::Array{T,3}
-    advu_pd::Array{T,3}
-    advv_pd::Array{T,3}
-    advw_pd::Array{T,3}
-    grid_spacing::Tuple{T,T,T}
+    rot_fd::NTuple{3,Array{Complex{T},3}}
+    vel_pd::NTuple{3,Array{T,3}}
+    rot_pd::NTuple{3,Array{T,3}}
+    adv_pd::NTuple{3,Array{T,3}}
+    grid_spacing::Tuple{T,T,Array{T,1}}
 
-    AdvectionBuffers(T, gd::DistributedGrid, domain_size) =
+    AdvectionBuffers(gd::DistributedGrid, gm::GridMapping{T}) where T =
         new{T}(
-            # rot_fd
-            zeros_fd(T, gd, NodeSet(:V)),
-            zeros_fd(T, gd, NodeSet(:V)),
-            zeros_fd(T, gd, NodeSet(:H)),
-
-            # vel_pd
-            zeros_pd(T, gd, NodeSet(:H)),
-            zeros_pd(T, gd, NodeSet(:H)),
-            zeros_pd(T, gd, NodeSet(:V)),
-
-            # rot_pd
-            zeros_pd(T, gd, NodeSet(:V)),
-            zeros_pd(T, gd, NodeSet(:V)),
-            zeros_pd(T, gd, NodeSet(:H)),
-
-            # adv_pd
-            zeros_pd(T, gd, NodeSet(:H)),
-            zeros_pd(T, gd, NodeSet(:H)),
-            zeros_pd(T, gd, NodeSet(:V)),
-
-            # grid_spacing
-            domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+            zeros_fd.(T, gd, inverted_nodes()), # rot_fd
+            zeros_pd.(T, gd, staggered_nodes()), # vel_pd
+            zeros_pd.(T, gd, inverted_nodes()), # rot_pd
+            zeros_pd.(T, gd, staggered_nodes()), # adv_pd
+            local_grid_spacing(gd, gm),
         )
 end
 
-function advective_timescale(vel_layers, grid_spacing::NTuple{3,T}) where {T}
+function advective_timescale(vel_layers, grid_spacing::Tuple{T,T,AbstractArray{T}}) where {T}
 
     # compute maximum velocity per layer (for CFL condition)
     umax_layer, vmax_layer, wmax_layer = (map(l -> mapreduce(abs, max, l), vel) for vel = vel_layers)
 
-    # compute global maxima of u_i
-    umax = global_maximum(reduce(max, umax_layer, init = zero(T)))
-    vmax = global_maximum(reduce(max, vmax_layer, init = zero(T)))
-    wmax = global_maximum(reduce(max, wmax_layer, init = zero(T)))
+    # compute local timescales
+    # NOTE: we use `reduce` instead of `maximum` to handle the case where there are zero local layers
+    ts1 = reduce(min, (grid_spacing[1] / umax_layer[i] for i=1:length(umax_layer)), init=convert(T, Inf))
+    ts2 = reduce(min, (grid_spacing[2] / vmax_layer[i] for i=1:length(vmax_layer)), init=convert(T, Inf))
+    ts3 = reduce(min, (grid_spacing[3][i] / wmax_layer[i] for i=1:length(wmax_layer)), init=convert(T, Inf))
 
-    # compute advective time scales
-    grid_spacing ./ (umax, vmax, wmax)
+    global_minimum.((ts1, ts2, ts3))
 end
 
 function set_advection!(rhs, vel, df::DerivativeFactors, ht::HorizontalTransform,
         lower_bcs::Tuple, upper_bcs::Tuple, b::AdvectionBuffers)
 
     # compute vorticity in frequency domain
-    ul, vl, wl = map(layers, vel)
-    rotu!(layers(b.rotu_fd), vl, wl, df, upper_bcs[2])
-    rotv!(layers(b.rotv_fd), ul, wl, df, upper_bcs[1])
-    rotw!(layers(b.rotw_fd), ul, vl, df)
+    set_vorticity!(b.rot_fd, vel, lower_bcs, upper_bcs, df)
 
-    # transform vorticity to physical domain
-    get_field!(b.rotu_pd, ht, b.rotu_fd, NodeSet(:V))
-    get_field!(b.rotv_pd, ht, b.rotv_fd, NodeSet(:V))
-    get_field!(b.rotw_pd, ht, b.rotw_fd, NodeSet(:H))
-
-    # transform velocity to physical domain
-    get_field!(b.u_pd, ht, vel[1], NodeSet(:H))
-    get_field!(b.v_pd, ht, vel[2], NodeSet(:H))
-    get_field!(b.w_pd, ht, vel[3], NodeSet(:V))
+    # transform velocity and vorticity to physical domain
+    get_field!.(b.vel_pd, ht, vel, staggered_nodes())
+    get_field!.(b.rot_pd, ht, b.rot_fd, inverted_nodes())
 
     # compute advection term in physical domain
-    upd, vpd, wpd = map(layers, (b.u_pd, b.v_pd, b.w_pd))
-    rupd, rvpd, rwpd = map(layers, (b.rotu_pd, b.rotv_pd, b.rotw_pd))
+    upd, vpd, wpd = layers.(b.vel_pd)
+    rupd, rvpd, rwpd = layers.(b.rot_pd)
     lbcu, lbcv, lbcw = lower_bcs
     ubcu, ubcv, ubcw = upper_bcs
-    advu!(layers(b.advu_pd), vpd, rvpd, wpd, rwpd, lbcu, ubcu, lbcw, ubcw)
-    advv!(layers(b.advv_pd), upd, rupd, wpd, rwpd, lbcv, ubcv, lbcw, ubcw)
-    advw!(layers(b.advw_pd), upd, rupd, vpd, rvpd, ubcu, ubcv)
+    advu!(layers(b.adv_pd[1]), vpd, rvpd, wpd, rwpd, lbcu, ubcu, lbcw, ubcw)
+    advv!(layers(b.adv_pd[2]), upd, rupd, wpd, rwpd, lbcv, ubcv, lbcw, ubcw)
+    advw!(layers(b.adv_pd[3]), upd, rupd, vpd, rvpd, ubcu, ubcv)
 
     # compute smallest time scale for advection term (for CFL condition)
     dt_adv = advective_timescale((upd, vpd, wpd), b.grid_spacing)
 
     # transform advection term to frequency domain (overwriting rhs)
-    set_field!(rhs[1], ht, b.advu_pd, NodeSet(:H))
-    set_field!(rhs[2], ht, b.advv_pd, NodeSet(:H))
-    set_field!(rhs[3], ht, b.advw_pd, NodeSet(:V))
+    set_field!.(rhs, ht, b.adv_pd, staggered_nodes())
 
     rhs, dt_adv
 end

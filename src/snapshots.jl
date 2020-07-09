@@ -2,7 +2,7 @@ const CBD_MAGIC_NUMBER = hex2bytes("CBDF")
 const CBD_VERSION = 1
 
 function sequential_open(f, filename, mode)
-    id, N = proc_id()
+    id, N = proc_info()
     r = nothing
     for i=1:N
         if i == id
@@ -33,7 +33,7 @@ function write_field(T, filename, field, x, y, z, domain_min, domain_max)
     length(z) == Nz || error("Length of z-values incompatible with dimensions of field.")
 
     sequential_open(filename, "a") do f
-        if proc_id()[1] == 1
+        if proc_info()[1] == 1
             write(f, identifier)
             write(f, collect(UInt64, (Nx, Ny, Nz)))
             write(f, collect(Float64, domain_min))
@@ -85,7 +85,7 @@ function read_field(filename, nodeset::NodeSet)
     end
 end
 
-function write_field(filename, field::Array{Complex{T}}, ds::NTuple{3},
+function write_field(filename, field::Array{Complex{T}}, gm::GridMapping{T},
         ht::HorizontalTransform{T}, sf::NTuple{2}, ns::NodeSet;
         shift=true, output_type=T) where {T}
 
@@ -100,16 +100,19 @@ function write_field(filename, field::Array{Complex{T}}, ds::NTuple{3},
 
     shifth, shiftv = (shift, ns isa NodeSet{:H})
     gs = (size(buffer_pd, 1), size(buffer_pd, 2), global_sum(size(buffer_pd, 3)) + (shiftv ? 0 : 1))
+    xmin = (zero(T), zero(T), gm.vmap(zero(T)))
+    xmax = (gm.hsize1, gm.hsize2, gm.vmap(one(T)))
+
 
     # when the indices are not shifted, the H-nodes start at zero
     # but the V-nodes start at Δz
-    x = LinRange(0, ds[1], 2*gs[1]+1)[(shifth ? 2 : 1):2:end-1]
-    y = LinRange(0, ds[2], 2*gs[2]+1)[(shifth ? 2 : 1):2:end-1]
-    z = LinRange(0, ds[3], 2*gs[3]+1)[(shiftv ? 2 : 3):2:end-1]
+    x1 = LinRange(xmin[1], xmax[1], 2*gs[1]+1)[(shifth ? 2 : 1):2:end-1]
+    x2 = LinRange(xmin[2], xmax[2], 2*gs[2]+1)[(shifth ? 2 : 1):2:end-1]
+    ζ  = LinRange(0,       one(T),  2*gs[3]+1)[(shiftv ? 2 : 3):2:end-1]
+    x3 = gm.vmap.(ζ)
 
     LinearAlgebra.mul!(buffer_pd, get_plan_bwd(ht, ns), buffer_fd)
-    write_field(output_type, filename, buffer_pd, x, y, z,
-                (zero(T), zero(T), zero(T)), ds)
+    write_field(output_type, filename, buffer_pd, x1, x2, x3, xmin, xmax)
 end
 
 # TODO: change this to a function that shifts/unshifts a field in-place
@@ -187,11 +190,11 @@ function next_snapshot_time(output::OutputCache)
     i > length(ts) ? Inf : ts[i]
 end
 
-function write_state(dir, state, domain_size, transform, shift_factors)
+function write_state(dir, state, mapping, transform, shift_factors)
     mkpath(dir)
-    write_field(joinpath(dir, "u.cbd"), state[1], domain_size, transform, shift_factors, NodeSet(:H))
-    write_field(joinpath(dir, "v.cbd"), state[2], domain_size, transform, shift_factors, NodeSet(:H))
-    write_field(joinpath(dir, "w.cbd"), state[3], domain_size, transform, shift_factors, NodeSet(:V))
+    write_field(joinpath(dir, "u.cbd"), state[1], mapping, transform, shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "v.cbd"), state[2], mapping, transform, shift_factors, NodeSet(:H))
+    write_field(joinpath(dir, "w.cbd"), state[3], mapping, transform, shift_factors, NodeSet(:V))
 end
 
 function write_snapshot(output::OutputCache, state, t)
@@ -199,40 +202,40 @@ function write_snapshot(output::OutputCache, state, t)
     output.snapshot_timestamps[output.snapshot_counter[]] ≈ t || error("Snapshot output out of sync")
     dir = format_dirname(output.snapshot_dir, output.snapshot_counter[],
                          output.snapshot_timestamps, output.snapshot_tsdigits)
-    write_state(dir, state, output.domain_size, output.transform, output.shift_factors)
+    write_state(dir, state, output.mapping, output.transform, output.shift_factors)
 end
 
 # TODO: combine this with set_field! for the extended array, just specifying
 # the shift factor and making sure there are no issues with differently sized
 # field_pd arrays
 function read_field!(field_fd::AbstractArray{Complex{T},3}, filename::String,
-        gd::DistributedGrid, ht::HorizontalTransform, sf::NTuple{2},
-        ds::Tuple{T,T,T}, ns::NodeSet) where T
+        gd::DistributedGrid, gm::GridMapping{T}, ht::HorizontalTransform,
+        sf::NTuple{2}, ns::NodeSet) where T
 
     xmin, xmax, x1, x2, x3, field_pd = read_field(filename, ns)
 
     # check that all data is as expected
     n = (2*gd.nx_fd-1, gd.ny_fd, gd.nz_global)
-    @assert all(xmin .≈ (zero(T), zero(T), zero(T)))
-    @assert all(xmax .≈ ds)
-    @assert x1 ≈ LinRange(0, ds[1], 2 * n[1] + 1)[2:2:end]
-    @assert x2 ≈ LinRange(0, ds[2], 2 * n[2] + 1)[2:2:end]
-    @assert x3 ≈ LinRange(0, ds[3], 2 * n[3] + 1)[(ns isa NodeSet{:V} ?
-        (3:2:end-1) : (2:2:end))]
+    @assert all(xmin .≈ (zero(T), zero(T), gm.vmap(zero(T))))
+    @assert all(xmax .≈ (gm.hsize1, gm.hsize2, gm.vmap(one(T))))
+    @assert x1 ≈ LinRange(xmin[1], xmax[1], 2 * n[1] + 1)[2:2:end]
+    @assert x2 ≈ LinRange(xmin[2], xmax[2], 2 * n[2] + 1)[2:2:end]
+    @assert x3 ≈ gm.vmap.(LinRange(zero(T), one(T), 2 * n[3] + 1)[(ns isa NodeSet{:V} ?
+                                                           (3:2:end-1) : (2:2:end))])
 
     LinearAlgebra.mul!(field_fd, get_plan_fwd(ht, ns), field_pd)
     broadcast!((û, s1, s2) -> û / (n[1] * n[2] * s1 * s2), field_fd, field_fd, sf[1], sf[2])
     field_fd
 end
 
-function read_snapshot!(vel, dir, gd::DistributedGrid, ds::Tuple{T,T,T}) where T
+function read_snapshot!(vel, dir, gd::DistributedGrid, gm::GridMapping{T}) where T
     fn = joinpath.(dir, ("u.cbd", "v.cbd", "w.cbd"))
     ns = (NodeSet(:H), NodeSet(:H), NodeSet(:V))
     ht = HorizontalTransform(T, gd, expand=false)
     sf = shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd)
-    Tuple(read_field!(vel[i], fn[i], gd, ht, sf, ds, ns[i]) for i=1:3)
+    Tuple(read_field!(vel[i], fn[i], gd, gm, ht, sf, ns[i]) for i=1:3)
 end
 
-read_snapshot(dir, gd, domain_size::Tuple{T,T,T}) where T = read_snapshot!(
+read_snapshot(dir, gd, gm::GridMapping{T}) where T = read_snapshot!(
         (zeros_fd(T, gd, NodeSet(:H)), zeros_fd(T, gd, NodeSet(:H)),
-        zeros_fd(T, gd, NodeSet(:V))), dir, gd, domain_size)
+        zeros_fd(T, gd, NodeSet(:V))), dir, gd, gm)

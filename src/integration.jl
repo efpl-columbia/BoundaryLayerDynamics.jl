@@ -3,33 +3,14 @@ function add_forcing!(rhs_hat, forcing)
     @. rhs_hat[2][1,1,:] += forcing[2]
 end
 
-function force_mean_velocity!(u_hat, u_target, nz)
-    #u_bar = real(global_sum(u_hat[1][1,1,:]) / nz)
-    #v_bar = real(global_sum(u_hat[2][1,1,:]) / nz)
-    #fx = u_target[1] - u_bar
-    #fy = u_target[2] - v_bar
-    #@. u_hat[1][1,1,:] += fx
-    #@. u_hat[2][1,1,:] += fy
-    #println("forcing x-velocity to match ", u_target[1], " (currently ", u_bar, ", adding ", fx, ")")
-    #println("forcing y-velocity to match ", u_target[2], " (currently ", v_bar, ", adding ", fy, ")")
-    u_hat[1][1,1,:] .+= u_target[1] - real(global_sum(u_hat[1][1,1,:])) / nz
-    u_hat[2][1,1,:] .+= u_target[2] - real(global_sum(u_hat[2][1,1,:])) / nz
+function force_mean_velocity!(u_hat, u_target, gd, gm::GridMapping{T}) where {T}
+    ζc = vrange(T, gd, NodeSet(:H))
+    local_flux_u1 = sum(real(u_hat[1][1,1,i]) * gm.Dvmap(ζc[i]) for i=1:gd.nz_h) / gd.nz_global
+    local_flux_u2 = sum(real(u_hat[2][1,1,i]) * gm.Dvmap(ζc[i]) for i=1:gd.nz_h) / gd.nz_global
+    L3 = gm.vmap(one(T)) - gm.vmap(zero(T))
+    u_hat[1][1,1,:] .+= u_target[1] - global_sum(local_flux_u1) / L3
+    u_hat[2][1,1,:] .+= u_target[2] - global_sum(local_flux_u2) / L3
 end
-
-init_velocity_fields(T, gd) = (zeros_fd(T, gd, NodeSet(:H)),
-                               zeros_fd(T, gd, NodeSet(:H)),
-                               zeros_fd(T, gd, NodeSet(:V)))
-
-function init_velocity(gd, ht::HorizontalTransform{T}, vel0, domain_size) where T
-    δ = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-    vel = init_velocity_fields(T, gd)
-    set_field!(vel[1], ht, vel0[1], δ, gd.iz_min, NodeSet(:H))
-    set_field!(vel[2], ht, vel0[2], δ, gd.iz_min, NodeSet(:H))
-    set_field!(vel[3], ht, vel0[3], δ, gd.iz_min, NodeSet(:V))
-    vel
-end
-
-init_pressure(T, gd) = zeros_fd(T, gd, NodeSet(:H))
 
 abstract type BoundaryDefinition end
 struct FreeSlipBoundary <: BoundaryDefinition end
@@ -41,90 +22,86 @@ end
 solid_wall(roughness::Nothing) = SmoothWallBoundary()
 solid_wall(roughness::Real) = RoughWallBoundary(roughness)
 
-init_bcs(bc::FreeSlipBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
+init_bcs(bc::FreeSlipBoundary, gd::DistributedGrid, ::GridMapping{T}) where T =
         (NeumannBC(zero(T), gd), NeumannBC(zero(T), gd), DirichletBC(zero(T), gd))
 
-init_bcs(bc::SmoothWallBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
+init_bcs(bc::SmoothWallBoundary, gd::DistributedGrid, ::GridMapping{T}) where T =
         (DirichletBC(zero(T), gd), DirichletBC(zero(T), gd), DirichletBC(zero(T), gd))
 
-init_bcs(bc::RoughWallBoundary, gd::DistributedGrid, ds::NTuple{3,T}) where T =
-        (RoughWallEquilibriumBC(convert(T, bc.roughness), gd, ds),
-         RoughWallEquilibriumBC(convert(T, bc.roughness), gd, ds),
+init_bcs(bc::RoughWallBoundary, gd::DistributedGrid, gm::GridMapping{T}) where T =
+        (RoughWallEquilibriumBC(convert(T, bc.roughness), gd, gm),
+         RoughWallEquilibriumBC(convert(T, bc.roughness), gd, gm),
          DirichletBC(zero(T), gd))
 
 init_bcs(bcs::NTuple{3,Union{String,Pair}}, gd::DistributedGrid,
-         ds::NTuple{3,T}) where T = map(bcs) do bc
+         gm::GridMapping{T}) where T = map(bcs) do bc
     t, val = bc isa String ? (bc, zero(T)) : (bc[1], convert(T, bc[2]))
     t == "Dirichlet" && return DirichletBC(val, gd)
     t == "Neumann" && return NeumannBC(val, gd)
     @error "Invalid boundary condition" bc
 end
 
+bc_noslip(T, gd) = (DirichletBC(zero(T), gd),
+                    DirichletBC(zero(T), gd),
+                    DirichletBC(zero(T), gd))
+bc_freeslip(T, gd) = (NeumannBC(zero(T), gd),
+                      NeumannBC(zero(T), gd),
+                    DirichletBC(zero(T), gd))
+
 bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
 bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
 
-init_advection(T, gd, ds, lbcs, ubcs, sgs::Nothing) =
-        AdvectionBuffers(T, gd, ds)
-init_advection(T, gd, ds, lbcs, ubcs, sgs::StaticSmagorinskyModel) =
-        FilteredAdvectionBuffers(T, gd, ds, lbcs, ubcs, sgs)
+init_advection(gd, gm, lbcs, ubcs, sgs::Nothing) =
+        AdvectionBuffers(gd, gm)
+init_advection(gd, gm, lbcs, ubcs, sgs::StaticSmagorinskyModel) =
+        FilteredAdvectionBuffers(gd, gm, lbcs, ubcs, sgs)
 
 struct ChannelFlowProblem{P,T}
     velocity::NTuple{3,Array{Complex{T},3}}
-    pressure::Array{Complex{T},3}
     rhs::NTuple{3,Array{Complex{T},3}}
-    grid::DistributedGrid{P}
-    domain_size::NTuple{3,T}
+    grid::DistributedGrid
+    mapping::GridMapping{T}
     transform::HorizontalTransform{T}
     derivatives::DerivativeFactors{T}
     advection_buffers::Union{AdvectionBuffers{T},FilteredAdvectionBuffers{T,P}}
+    pressure_solver::PressureSolver{P,T}
     lower_bcs::NTuple{3,BoundaryCondition}
     upper_bcs::NTuple{3,BoundaryCondition}
-    pressure_bc::UnspecifiedBC
-    pressure_solver::DistributedBatchLDLt{P,T,Complex{T}}
     diffusion_coeff::T
     forcing::NTuple{2,T}
     constant_flux::Bool
 
-    ChannelFlowProblem(grid_size::NTuple{3,Int}, domain_size::NTuple{3,T},
-        initial_conditions::NTuple{3,Function}, lower_bcs, upper_bcs,
+    function ChannelFlowProblem(grid_size::NTuple{3,Int}, domain, lower_bcs, upper_bcs,
         diffusion_coeff::T, forcing::NTuple{2,T}, constant_flux::Bool;
-        sgs_model = nothing) where {T<:SupportedReals} = begin
-
-        pressure_solver_batch_size = 64
+        sgs_model = nothing, pressure_solver_batch_size = 64) where {T<:SupportedReals}
 
         gd = DistributedGrid(grid_size...)
+        gm = GridMapping(domain...)
         ht = HorizontalTransform(T, gd)
-        df = DerivativeFactors(gd, domain_size)
-        lbcs = init_bcs(lower_bcs, gd, domain_size)
-        ubcs = init_bcs(upper_bcs, gd, domain_size)
+        df = DerivativeFactors(gd, gm)
+        lbcs = init_bcs(lower_bcs, gd, gm)
+        ubcs = init_bcs(upper_bcs, gd, gm)
+        adv = init_advection(gd, gm, lbcs, ubcs, sgs_model)
+        ps = PressureSolver(gd, gm, pressure_solver_batch_size)
 
         new{proc_type(),T}(
-            init_velocity(gd, ht, initial_conditions, domain_size),
-            init_pressure(T, gd),
-            init_velocity_fields(T, gd),
-            gd, domain_size, ht, df, init_advection(T, gd, domain_size, lbcs, ubcs, sgs_model),
-            lbcs, ubcs, UnspecifiedBC(T, gd),
-            prepare_pressure_solver(gd, df, pressure_solver_batch_size),
+            zeros_fd.(T, gd, staggered_nodes()),
+            zeros_fd.(T, gd, staggered_nodes()),
+            gd, gm, ht, df, adv, ps, lbcs, ubcs,
             diffusion_coeff, forcing, constant_flux)
     end
 end
 
-zero_ics(T) = (f0 = (x,y,z) -> zero(T); (f0,f0,f0))
-
-# TODO: remove initial conditions from ChannelFlowProblem above
-
 prepare_ics(vel::Real) = ((x1,x2,x3)->vel, (x1,x2,x3)->0, (x1,x2,x3)->0)
 prepare_ics(velh::Tuple{Real,Real}) = ((x1,x2,x3)->vel[1], (x1,x2,x3)->vel[2], (x1,x2,x3)->0)
 prepare_ics(vel::Function) = (vel, (x1,x2,x3)->0, (x1,x2,x3)->0)
-prepare_ics(velh::Tuple{Function,Function}) = (vel[1], vel[2], (x1,x2,x3)->0)
+prepare_ics(velh::Tuple{Function,Function}) = (velh[1], velh[2], (x1,x2,x3)->0)
 prepare_ics(vels::NTuple{3,Function}) = vels
 
-function set_velocity!(vel, ht::HorizontalTransform, f::NTuple{3,Function}, gd::DistributedGrid, ds::NTuple{3,T}) where T
-    δ = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-    set_field!(vel[1], ht, f[1], δ, gd.iz_min, NodeSet(:H))
-    set_field!(vel[2], ht, f[2], δ, gd.iz_min, NodeSet(:H))
-    set_field!(vel[3], ht, f[3], δ, gd.iz_min, NodeSet(:V))
-    vel
+function set_velocity!(cf::ChannelFlowProblem{P,T}, vel; noise_intensity = 0) where {P,T}
+    set_field!.(cf.velocity, prepare_ics(vel), cf.grid, cf.mapping, cf.transform, staggered_nodes())
+    noise_intensity > 0 && add_noise!.(cf.velocity, convert(T, noise_intensity))
+    cf
 end
 
 function add_noise!(vel::AbstractArray{Complex{T},3}, intensity::T = one(T) / 8) where T
@@ -138,12 +115,6 @@ function add_noise!(vel::AbstractArray{Complex{T},3}, intensity::T = one(T) / 8)
         end
     end
     vel
-end
-
-function set_velocity!(cf::ChannelFlowProblem{P,T}, vel; noise_intensity = 0) where {P,T}
-    set_velocity!(cf.velocity, cf.transform, prepare_ics(vel), cf.grid, cf.domain_size)
-    add_noise!.(cf.velocity, convert(T, noise_intensity))
-    cf
 end
 
 open_channel(grid_size, Re; domain = (4π, 2π), ic = zero_ics(Float64),
@@ -160,7 +131,7 @@ get_velocity(gd::DistributedGrid, ht::HorizontalTransform{T}, velocity) where T 
         get_field!(zeros_pd(T, gd, NodeSet(:V)), ht, velocity[3], NodeSet(:V)))
 get_velocity(cf::ChannelFlowProblem) = get_velocity(cf.grid, cf.transform, cf.velocity)
 
-coords(cf::ChannelFlowProblem, ns::NodeSet) = coords(cf.grid, cf.domain_size, ns)
+coords(cf::ChannelFlowProblem, ns::NodeSet) = coords(cf.grid, cf.mapping, ns)
 
 function show_all(io::IO, to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
@@ -181,7 +152,7 @@ function show_all(io::IO, to::TimerOutputs.TimerOutput)
 end
 
 load_snapshot!(cf::ChannelFlowProblem, snapshot_dir) =
-    read_snapshot!(cf.velocity, snapshot_dir, cf.grid, cf.domain_size)
+    read_snapshot!(cf.velocity, snapshot_dir, cf.grid, cf.mapping)
 
 function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
@@ -190,7 +161,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         verbose=true) where {P,T}
 
     to = TimerOutputs.get_defaulttimer()
-    oc = OutputCache(cf.grid, cf.domain_size, dt, nt, cf.lower_bcs, cf.upper_bcs,
+    oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
             cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_io, output_frequency)
     stats = MeanStatistics(T, cf.grid, profiles_dir, profiles_frequency,
             profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
@@ -199,10 +170,9 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
 
     function pressure_solver!(u)
         TimerOutputs.@timeit to "pressure" begin
-            solve_pressure!(cf.pressure, u.x, cf.lower_bcs, cf.upper_bcs,
-                cf.pressure_bc, cf.derivatives, cf.pressure_solver)
-            subtract_pressure_gradient!(u.x, cf.pressure, cf.derivatives, cf.pressure_bc)
-            cf.constant_flux && force_mean_velocity!(u.x, cf.forcing, cf.grid.nz_global)
+            enforce_continuity!(u.x, cf.lower_bcs, cf.upper_bcs,
+                                cf.grid, cf.derivatives, cf.pressure_solver)
+            cf.constant_flux && force_mean_velocity!(u.x, cf.forcing, cf.grid, cf.mapping)
         end
     end
 

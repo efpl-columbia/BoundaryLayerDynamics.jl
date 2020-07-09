@@ -5,44 +5,8 @@ struct NodeSet{NS}
         error("Invalid NodeSet: $(NS) (only :H and :V are allowed)")
 end
 
-abstract type ProcType end
-struct SingleProc <: ProcType end
-struct MinProc    <: ProcType end
-struct InnerProc  <: ProcType end
-struct MaxProc    <: ProcType end
-LowestProc  = Union{SingleProc, MinProc}
-HighestProc = Union{SingleProc, MaxProc}
-
-proc_below() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) - 1
-proc_above() = (MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) : 0) + 1
-proc_id() = MPI.Initialized() ? (MPI.Comm_rank(MPI.COMM_WORLD) + 1,
-        MPI.Comm_size(MPI.COMM_WORLD)) : (1,1)
-proc(i, n) = (i,n) == (1,1) ? SingleProc() : i == 1 ? MinProc() :
-             i == n ? MaxProc() : InnerProc()
-proc_type(p::P) where {P<:ProcType} = P
-proc_type() = proc_type(proc(proc_id()...))
-
-global_maximum(val::T) where {T<:Real} =
-        MPI.Initialized() ? MPI.Allreduce(val, MPI.MAX, MPI.COMM_WORLD) : val
-
-function global_maximum(field::Array{T}) where {T<:SupportedReals}
-    # specifying T avoids accidentially taking the maximum in Fourier space
-    global_maximum(mapreduce(abs, max, field))
-end
-
-global_sum(Ns) = MPI.Initialized() ? MPI.Allreduce(sum(Ns), MPI.SUM, MPI.COMM_WORLD) : sum(Ns)
-
-struct DistributedGrid{P<:ProcType}
-    nx_fd::Int
-    nx_pd::Int
-    ny_fd::Int
-    ny_pd::Int
-    nz_h::Int
-    nz_v::Int
-    nz_global::Int
-    iz_min::Int
-    iz_max::Int
-end
+staggered_nodes() = (NodeSet(:H), NodeSet(:H), NodeSet(:V))
+inverted_nodes() = (NodeSet(:V), NodeSet(:V), NodeSet(:H))
 
 function vertical_range(nz, proc_id, proc_count)
     nz >= proc_count || error("There should not be more processes than vertical layers")
@@ -57,10 +21,24 @@ end
 # these more specific methods of vertical_range give the distribution of the
 # vertical indices for a specific set of nodes. note that the variant for the
 # V-nodes takes the global number of V-layers as argument, which is reduced by 1.
-vertical_range(nz_global_h, ns::NodeSet{:H}) =
-    (vr = vertical_range(nz_global_h, proc_id()...); (vr[1], vr[2]))
-vertical_range(nz_global_v, ns::NodeSet{:V}) =
-    (vr = vertical_range(nz_global_v+1, proc_id()...); (vr[1], vr[1]+vr[4]-1))
+proc_info() = MPI.Initialized() ? (MPI.Comm_rank(MPI.COMM_WORLD) + 1,
+        MPI.Comm_size(MPI.COMM_WORLD)) : (1,1)
+vertical_range(nz_global_h, ::NodeSet{:H}) =
+    (vr = vertical_range(nz_global_h, proc_info()...); (vr[1], vr[2]))
+vertical_range(nz_global_v, ::NodeSet{:V}) =
+    (vr = vertical_range(nz_global_v+1, proc_info()...); (vr[1], vr[1]+vr[4]-1))
+
+struct DistributedGrid
+    nx_fd::Int
+    nx_pd::Int
+    ny_fd::Int
+    ny_pd::Int
+    nz_h::Int
+    nz_v::Int
+    nz_global::Int
+    iz_min::Int
+    iz_max::Int
+end
 
 function DistributedGrid(nx, ny, nz, proc_id, proc_count)
 
@@ -82,30 +60,22 @@ function DistributedGrid(nx, ny, nz, proc_id, proc_count)
     # vertical sizes
     iz_min, iz_max, nz_local_h, nz_local_v = vertical_range(nz, proc_id, proc_count)
 
-    DistributedGrid{proc_type()}(nx_fd, nx_pd, ny_fd, ny_pd,
+    DistributedGrid(nx_fd, nx_pd, ny_fd, ny_pd,
             nz_local_h, nz_local_v, nz, iz_min, iz_max)
 end
 
-function DistributedGrid(nx, ny, nz)
-    if MPI.Initialized()
-        comm = MPI.COMM_WORLD
-        mpi_size = MPI.Comm_size(comm)
-        mpi_rank = MPI.Comm_rank(comm)
-        DistributedGrid(nx, ny, nz, mpi_rank + 1, mpi_size)
-    else
-        DistributedGrid(nx, ny, nz, 1, 1)
-    end
-end
-
+# convenience functions
+DistributedGrid(nx, ny, nz) = DistributedGrid(nx, ny, nz, proc_info()...)
 DistributedGrid(n) = DistributedGrid(n, n, n)
+Broadcast.broadcastable(gd::DistributedGrid) = Ref(gd) # to use as argument of elementwise functions
 
-function Base.show(io::IO, gd::DistributedGrid{P}) where {P}
+function Base.show(io::IO, gd::DistributedGrid)
 
     ip = MPI.Initialized() ? MPI.Comm_rank(MPI.COMM_WORLD) + 1 : 1
     np = MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 1
 
     println(io, "DistributedGrid(", gd.nx_fd * 2,  ", ", gd.ny_fd + 1, ", ",
-            gd.nz_global, ")", " part ", ip, "/", np, " (", P, ")")
+            gd.nz_global, ")", " part ", ip, "/", np)
 
     println(io, "  Physical Domain:  ",
             "ix=1…", gd.nx_pd, ", ",
@@ -125,173 +95,87 @@ end
 # create new fields initialized to zero
 get_nz(gd::DistributedGrid, ns::NodeSet{:H}) = gd.nz_h
 get_nz(gd::DistributedGrid, ns::NodeSet{:V}) = gd.nz_v
-@inline zeros_fd(T, gd::DistributedGrid, ns::NodeSet) =
-        zeros(Complex{T}, gd.nx_fd, gd.ny_fd, get_nz(gd, ns))
-@inline zeros_pd(T, gd::DistributedGrid, ns::NodeSet) =
-        zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
+zeros_fd(T, gd::DistributedGrid, ns::NodeSet) = zeros(Complex{T}, gd.nx_fd, gd.ny_fd, get_nz(gd, ns))
+zeros_pd(T, gd::DistributedGrid, ns::NodeSet) = zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
+zeros_fd(T, gd, ns::Symbol) = zeros_fd(T, gd, NodeSet(ns))
+zeros_pd(T, gd, ns::Symbol) = zeros_pd(T, gd, NodeSet(ns))
 
-abstract type BoundaryCondition{P<:ProcType,T} end
-abstract type SolidWallBC{P,T} <: BoundaryCondition{P,T} end
-struct DirichletBC{P,T} <: SolidWallBC{P,T}
-    value::T
-    buffer_fd::Array{Complex{T},2}
-    buffer_pd::Array{T,2}
-    neighbor_below::Int
-    neighbor_above::Int
-    DirichletBC(value::T, nh_fd, nh_pd) where T =
-        new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
-        zeros(T, nh_pd...), proc_below(), proc_above())
-end
-DirichletBC(value::T, gd::DistributedGrid) where T =
-    DirichletBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
-
-struct NeumannBC{P,T} <: BoundaryCondition{P,T}
-    value::T
-    buffer_fd::Array{Complex{T},2}
-    buffer_pd::Array{T,2}
-    neighbor_below::Int
-    neighbor_above::Int
-    NeumannBC(value::T, nh_fd, nh_pd) where T =
-        new{proc_type(),T}(value, zeros(Complex{T}, nh_fd...),
-        zeros(T, nh_pd...), proc_below(), proc_above())
-end
-NeumannBC(value::T, gd::DistributedGrid) where T =
-    NeumannBC(value, (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
 """
-The UnspecifiedBC can be used as boundary condition for terms that do not have
-a boundary condition defined, such as pressure and the horizontal derivatives
-of u₁ and u₂. These might still require a boundary condition to pass data
-between layers, but they do not have a value specified for the actual boundary
-and will cause an error if the values is attempted to be accessed.
+GridMapping defines a transformed vertical coordinate system. It is defined as
+a mapping ζ: [0,1] → [0,L₃], such that the coordinate in a Cartesian coordinate
+system can be obtained as x₃ = ζ(X₃), where x₃ is the Cartesian
+coordinate and X₃ is the coordinate in the transformed system, i.e. ζ is
+defined as the function going from normalized transformed coordinates to the
+normalized "original" Cartesian coordinate system.  To compute both first and
+second derivatives, we also need the derivative of this transform as well as
+the first and second derivative of its inverse. We currently require these to
+be supplied explicitly and do not check whether they are consistent.
 """
-struct UnspecifiedBC{P,T} <: BoundaryCondition{P,T}
-    buffer_fd::Array{Complex{T},2}
-    buffer_pd::Array{T,2}
-    neighbor_below::Int
-    neighbor_above::Int
-    UnspecifiedBC(T, gd::DistributedGrid) =
-        new{proc_type(),T}(zeros(Complex{T}, gd.nx_fd, gd.ny_fd),
-        zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
+# GridMapping describes how the computational grid relates to the physical domain.
+# In horizontal direction, this contains the length of periodicity
+struct GridMapping{T}
+    hsize1::T
+    hsize2::T
+    vmap::Function # [0,1] → physical domain
+    Dvmap::Function
 end
 
-bc_noslip(T, gd) = (DirichletBC(zero(T), gd),
-                    DirichletBC(zero(T), gd),
-                    DirichletBC(zero(T), gd))
-bc_freeslip(T, gd) = (NeumannBC(zero(T), gd),
-                      NeumannBC(zero(T), gd),
-                    DirichletBC(zero(T), gd))
+GridMapping(L1::T, L2::T, L3::T) where T =
+    GridMapping(L1, L2, ζ -> ζ*L3, ζ -> L3)
+GridMapping(L1::T, L2::T, (L3¯, L3⁺)::Tuple{T,T}) where T =
+    GridMapping(L1, L2, ζ -> L3¯ + ζ * (L3⁺ - L3¯), x -> L3⁺ - L3¯)
+GridMapping(L1::T, L2::T, (x3, dx3dζ)::Tuple{Function,Function}) where T =
+    GridMapping(L1, L2, x3, dx3dζ)
+Broadcast.broadcastable(gm::GridMapping) = Ref(gm) # to use as argument of elementwise functions
 
-layers(field::Array{T,3}) where T =
-        Tuple(view(field, :, :, iz) for iz=1:size(field,3))
-
-@inline function get_layer_below(layers::Tuple, lower_bc::BoundaryCondition{SingleProc})
-    lower_bc
-end
-@inline function get_layer_below(layers::Tuple, lower_bc::BoundaryCondition{MinProc})
-    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
-    lower_bc
-end
-@inline function get_layer_below(layers::NTuple{N,AbstractArray{Complex{T}}},
-        lower_bc::BoundaryCondition{MaxProc,T}) where {N,T}
-    MPI.Recv!(lower_bc.buffer_fd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
-    lower_bc.buffer_fd
-end
-@inline function get_layer_below(layers::NTuple{N,AbstractArray{Complex{T}}},
-        lower_bc::BoundaryCondition{InnerProc,T}) where {N,T}
-    r = MPI.Irecv!(lower_bc.buffer_fd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
-    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
-    MPI.Wait!(r)
-    lower_bc.buffer_fd
+struct SinusoidalMapping
+    parameter
+    SinusoidalMapping(η) = (@assert 0 < η < 1; new(η))
 end
 
-# TODO: consider using a different way of handling pd & fd
-@inline function get_layer_below_pd(layers::Tuple, lower_bc::BoundaryCondition{SingleProc})
-    lower_bc
-end
-@inline function get_layer_below_pd(layers::Tuple, lower_bc::BoundaryCondition{MinProc})
-    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
-    lower_bc
-end
-@inline function get_layer_below_pd(layers::NTuple{N,AbstractArray{T}},
-        lower_bc::BoundaryCondition{MaxProc,T}) where {N,T}
-    # NOTE: it needs to be explicit that the pd version of this method is wanted,
-    # since layers can be empty, in which case the type information is lost
-    MPI.Recv!(lower_bc.buffer_pd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
-    lower_bc.buffer_pd
-end
-@inline function get_layer_below_pd(layers::NTuple{N,AbstractArray{T}},
-        lower_bc::BoundaryCondition{InnerProc,T}) where {N,T}
-    r = MPI.Irecv!(lower_bc.buffer_pd, lower_bc.neighbor_below, 1, MPI.COMM_WORLD)
-    MPI.Send(layers[end], lower_bc.neighbor_above, 1, MPI.COMM_WORLD)
-    MPI.Wait!(r)
-    lower_bc.buffer_pd
-end
+function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, one_sided) where T
 
-@inline function get_layer_above(layers::Tuple, upper_bc::BoundaryCondition{SingleProc})
-    upper_bc
-end
-@inline function get_layer_above(layers::Tuple, upper_bc::BoundaryCondition{MaxProc})
-    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
-    upper_bc
-end
-@inline function get_layer_above(layers::Tuple{}, upper_bc::DirichletBC{MaxProc,T}) where T
-    # this is a special case for when the top process does not have any layers,
-    # which is the case if there is only one layer per process. in this case, we
-    # fill the BC buffer with the boundary condition and pass that down to the
-    # process below
-    fill!(upper_bc.buffer_fd, zero(T))
-    upper_bc.buffer_fd[1,1] = upper_bc.value
-    MPI.Send(upper_bc.buffer_fd, upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
-    nothing # prevent the caller from trying to use the return value
-end
-@inline function get_layer_above(layers::NTuple{N,AbstractArray{Complex{T}}},
-        upper_bc::BoundaryCondition{MinProc,T}) where {N,T}
-    MPI.Recv!(upper_bc.buffer_fd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
-    upper_bc.buffer_fd
-end
-@inline function get_layer_above(layers::NTuple{N,AbstractArray{T}},
-        upper_bc::BoundaryCondition{MinProc,T}) where {N,T}
-    MPI.Recv!(upper_bc.buffer_pd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
-    upper_bc.buffer_pd
-end
-@inline function get_layer_above(layers::NTuple{N,AbstractArray{Complex{T}}},
-        upper_bc::BoundaryCondition{InnerProc,T}) where {N,T}
-    r = MPI.Irecv!(upper_bc.buffer_fd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
-    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
-    MPI.Wait!(r)
-    upper_bc.buffer_fd
-end
-@inline function get_layer_above(layers::NTuple{N,AbstractArray{T}},
-        upper_bc::BoundaryCondition{InnerProc,T}) where {N,T}
-    r = MPI.Irecv!(upper_bc.buffer_pd, upper_bc.neighbor_above, 2, MPI.COMM_WORLD)
-    MPI.Send(layers[1], upper_bc.neighbor_below, 2, MPI.COMM_WORLD)
-    MPI.Wait!(r)
-    upper_bc.buffer_pd
-end
+    @assert x3min < x3max
+    η = convert(T, m.parameter)
+    l = x3max - x3min
 
-# interpolation v-nodes to h-nodes
-add_interpolated_layer!(layer, layer¯, layer⁺) =
-    (@. layer += (layer¯ + layer⁺) / 2; layer)
-add_interpolated_layer!(layer, lbc::DirichletBC, layer⁺) =
-        (@. layer += (lbc.value + layer⁺) / 2; layer)
-add_interpolated_layer!(layer, layer¯, ubc::DirichletBC) =
-        (@. layer += (layer¯ + ubc.value) / 2; layer)
-
-function add_interpolation!(layers_h::NTuple{NZH}, layers_v::NTuple{NZV}, lower_bc, upper_bc) where {NZH, NZV}
-    layer_below = get_layer_below_pd(layers_v, lower_bc)
-    for i=1:NZH
-        add_interpolated_layer!(layers_h[i], i==1 ? layer_below : layers_v[i-1],
-                                i==NZH==NZV+1 ? upper_bc : layers_v[i])
+    if one_sided
+        x3 = ζ -> convert(T, x3min + l * (1 + sin(η*(ζ-1)*π/2) / sin(η*π/2)))
+        Dx3 = ζ -> convert(T, l * (η*π/2) * (cos(η*(ζ-1)*π/2) / sin(η*π/2)))
+        x3, Dx3
+    else
+        m = (x3min + x3max) / 2
+        x3 = ζ -> convert(T, m + l/2 * (sin(η*(2*ζ-1)*π/2) / sin(η*π/2)))
+        Dx3 = ζ -> convert(T, l/2 * (2*η*π/2) * (cos(η*(-1 + 2*ζ)*π/2) / sin(η*π/2)))
+        x3, Dx3
     end
-    layers_h
 end
 
-function interpolate(field_v, lower_bc::BoundaryCondition{P}, upper_bc::BoundaryCondition{P}) where {P}
-    field_h = (P <: HighestProc) ? zeros(eltype(field_v), size(field_v, 1), size(field_v, 2), size(field_v, 3) + 1) : zero(field_v)
-    add_interpolation!(layers(field_h), layers(field_v), lower_bc, upper_bc)
-    field_h
+instantiate(mapping, L3, one_sided) = instantiate(mapping, (zero(L3), L3), one_sided)
+
+function vrange(T, gd, ::NodeSet{:H}; neighbors=false)
+    ζ = LinRange(zero(T), one(T), 2*gd.nz_global+1) # all ζ-values
+    imin = 2*gd.iz_min - (neighbors ? 1 : 0)
+    imax = 2*gd.iz_max + (neighbors ? 1 : 0)
+    ζ[imin:2:imax]
 end
+
+function vrange(T, gd, ::NodeSet{:V}; neighbors=false)
+    ζ = LinRange(zero(T), one(T), 2*gd.nz_global+1) # all ζ-values
+    imin = 2*gd.iz_min+1 - (neighbors ? 1 : 0)
+    imax = 2*(gd.iz_min+gd.nz_v-1)+1 + (neighbors ? 1 : 0)
+    ζ[imin:2:imax]
+end
+
+k1(gd) = [0:gd.nx_fd-1; ]
+k2(gd) = [0:div(gd.ny_fd, 2); -div(gd.ny_fd, 2):-1]
+wavenumbers(gd) = (k1(gd), k2(gd))
+x1(gd, gm::GridMapping{T}) where T = LinRange(zero(T), gm.hsize1, gd.nx_pd+1)[1:end-1]
+x2(gd, gm::GridMapping{T}) where T = LinRange(zero(T), gm.hsize2, gd.ny_pd+1)[1:end-1]
+x3(gd, gm::GridMapping{T}, ns) where T = (gm.vmap(x) for x=vrange(T, gd, ns))
+coords(gd::DistributedGrid, gm::GridMapping, ns::NodeSet) =
+    ((x1, x2, x3) for x1=x1(gd, gm), x2=x2(gd, gm), x3=x3(gd, gm, ns))
 
 struct HorizontalTransform{T<:SupportedReals}
 
@@ -324,6 +208,7 @@ HorizontalTransform(T, gd::DistributedGrid; expand=true) = HorizontalTransform(T
         expand ? gd.nx_pd : 2*gd.nx_fd-1,
         expand ? gd.ny_pd : gd.ny_fd,
         gd.nz_h, gd.nz_v)
+Broadcast.broadcastable(ht::HorizontalTransform) = Ref(ht) # to use as argument of elementwise functions
 
 # utility functions to select the right plans & buffers at compile time
 @inline get_plan_fwd(ht, ::NodeSet{:H}) = ht.plan_fwd_h
@@ -335,29 +220,34 @@ HorizontalTransform(T, gd::DistributedGrid; expand=true) = HorizontalTransform(T
 @inline get_buffer_fd(ht, ::NodeSet{:H}) = ht.buffer_fd_h
 @inline get_buffer_fd(ht, ::NodeSet{:V}) = ht.buffer_fd_v
 
-
 """
 Transform a field from the frequency domain to an extended set of nodes in the
 physical domain by adding extra frequencies set to zero.
+The function optionally takes an array of prefactors which will be multiplied
+with the values before the inverse transform. These prefactors don’t have to be
+specified along all dimensions since singleton dimensions are broadcast, but
+they should be provided as three-dimensional array.
 """
-function get_field!(field_pd, ht::HorizontalTransform, field_fd, ns::NodeSet)
+function get_field!(field_pd, ht::HorizontalTransform, field_fd, prefactors, ns::NodeSet)
 
     # highest frequencies in non-expanded array
-    # this assumes that there are no Nyquist frequencies in field_hat
-    ny, ny_pd = size(field_fd,2), size(field_pd,2)
-    kx_max = size(field_fd,1) - 1 # [0, 1…kmax]
-    ky_max = div(ny,2) # [0, 1…kmax, -kmax…1]
+    # this assumes that there are no Nyquist frequencies in field_fd
+    # while this could be checked in y-direction, the x-direction is ambiguous
+    # so we just assume that there is no Nyquist frequency since that’s how the
+    # whole code is set up
+    kx_max = size(field_fd, 1) - 1 # [0, 1…K]
+    ky_max = div(size(field_fd, 2), 2) # [0, 1…K, -K…1]
 
-    # copy frequencies such that the extra frequencies are zero
+    # copy frequencies and set the extra frequencies to zero
     buffer = get_buffer_fd(ht, ns)
-    for i in CartesianIndices(buffer)
-        if 1+kx_max < i[1] || 1+ky_max < i[2] <= ny_pd - ky_max
-            buffer[i] = 0
-        else
-            buffer[i] = i[2] <= 1+ky_max ? field_fd[i] :
-                field_fd[i[1], i[2] - (ny_pd - ny), i[3]]
-        end
-    end
+    @views buffer[1:kx_max+1, 1:ky_max+1, :] .=
+        field_fd[:, 1:ky_max+1, :] .*
+        prefactors[:, 1:(size(prefactors, 2) == 1 ? 1 : ky_max+1), :]
+    @views buffer[1:kx_max+1, end-ky_max+1:end, :] .=
+        field_fd[:, ky_max+2:end, :] .*
+        prefactors[:, (size(prefactors, 2) == 1 ? 1 : ky_max+2):end, :]
+    buffer[1:kx_max+1, ky_max+2:end-ky_max, :] .= 0
+    buffer[kx_max+2:end, :, :] .= 0
 
     # perform ifft (note that this overwrites buffer_big_fd due to the way fftw
     # works, and also note that the factor 1/(nx*ny) is always multiplied during
@@ -366,7 +256,12 @@ function get_field!(field_pd, ht::HorizontalTransform, field_fd, ns::NodeSet)
     field_pd
 end
 
-get_field(gd::DistributedGrid, ht::HorizontalTransform{T}, field_fd, ns::NodeSet) where T=
+# default when prefactors are missing
+get_field!(field_pd, ht::HorizontalTransform, field_fd, ns::NodeSet) =
+    get_field!(field_pd, ht, field_fd, ones(eltype(field_pd), (1, 1, 1)), ns::NodeSet)
+
+# convenience function allocating a new array
+get_field(field_fd, gd::DistributedGrid, ht::HorizontalTransform{T}, ns::NodeSet) where T =
     get_field!(zeros_pd(T, gd, ns), ht, field_fd, ns)
 
 """
@@ -401,48 +296,14 @@ function set_field!(field_fd, ht::HorizontalTransform, field_pd::Array, ns::Node
     field_fd
 end
 
-# nodes generally start at zero, vertical direction is centered for H-nodes
-@inline coord(i, δ, ::NodeSet{:H}) = (δ[1] * (i[1]-1),
-                                      δ[2] * (i[2]-1),
-                                      δ[3] * (2*i[3]-1)/2)
-@inline coord(i, δ, ::NodeSet{:V}) = (δ[1] * (i[1]-1),
-                                      δ[2] * (i[2]-1),
-                                      δ[3] * (i[3]))
-coords(gd::DistributedGrid, domain_size, ns::NodeSet) = (
-    δ = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global);
-    iz_local = gd.iz_min:(gd.iz_min + get_nz(gd, ns) - 1);
-    (coord((ix, iy, iz), δ, ns) for ix=1:gd.nx_pd, iy=1:gd.ny_pd, iz=iz_local))
-
-function set_field!(field_fd, ht::HorizontalTransform, field_pd::Function,
-        grid_spacing, iz_min, ns::NodeSet)
+function set_field!(field_fd, field_pd::Function, gd, gm, ht::HorizontalTransform, ns::NodeSet)
     buffer = get_buffer_pd(ht, ns)
-    for i in CartesianIndices(buffer)
-        buffer[i] = field_pd(coord((i[1], i[2], i[3] + iz_min - 1), grid_spacing, ns)...)
+    for (i, x) in zip(CartesianIndices(buffer), coords(gd, gm, ns))
+        buffer[i] = field_pd(x...)
     end
     set_field!(field_fd, ht, buffer, ns)
 end
 
-set_field(gd::DistributedGrid, ht::HorizontalTransform{T}, field_pd::Function,
-        grid_spacing, ns::NodeSet) where {T} =
-        set_field!(zeros_fd(T, gd, ns), ht, field_pd, grid_spacing, gd.iz_min, ns)
-
-struct DerivativeFactors{T<:SupportedReals}
-    dx1::Array{Complex{T},2}
-    dy1::Array{Complex{T},2}
-    dz1::T
-    dx2::Array{T,2}
-    dy2::Array{T,2}
-    dz2::T
-    DerivativeFactors(gd::DistributedGrid, domain_size::Tuple{T,T,T}) where T = begin
-        kx = [0:gd.nx_fd-1; ]
-        ky = [0:div(gd.ny_fd, 2); -div(gd.ny_fd, 2):-1]
-        new{T}(
-            reshape(1im * kx * (2π/domain_size[1]), (gd.nx_fd, 1)),
-            reshape(1im * ky * (2π/domain_size[2]), (1, gd.ny_fd)),
-            gd.nz_global / domain_size[3], # 1/δz
-            reshape( - kx.^2 * (2π/domain_size[1])^2, (gd.nx_fd, 1)),
-            reshape( - ky.^2 * (2π/domain_size[2])^2, (1, gd.ny_fd)),
-            gd.nz_global^2 / domain_size[3]^2, # 1/δz²
-    )
-    end
-end
+# convenience function allocating a new array
+set_field(field_pd::Function, gd, gm::GridMapping{T}, ht::HorizontalTransform, ns::NodeSet) where T =
+    set_field!(zeros_fd(T, gd, ns), field_pd, gd, gm, ht, ns)

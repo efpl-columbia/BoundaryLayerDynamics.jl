@@ -14,9 +14,8 @@ function test_advection_exact(NZ)
 
     gd = CF.DistributedGrid(12, 14, NZ)
     ht = CF.HorizontalTransform(T, gd)
-    ds = (2*π, 2*π, 1.0)
-    gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-    df = CF.DerivativeFactors(gd, ds)
+    gm = CF.GridMapping(2*π, 2*π, 1.0)
+    df = CF.DerivativeFactors(gd, gm)
 
     x = LinRange(0, 2π, 13)[1:12]
     y = LinRange(0, 2π, 15)[1:14]
@@ -32,7 +31,7 @@ function test_advection_exact(NZ)
     rhs = (CF.zeros_fd(T, gd, CF.NodeSet(:H)),
            CF.zeros_fd(T, gd, CF.NodeSet(:H)),
            CF.zeros_fd(T, gd, CF.NodeSet(:V)))
-    b = CF.AdvectionBuffers(T, gd, ds)
+    b = CF.AdvectionBuffers(gd, gm)
     advh = CF.zeros_fd(T, gd, CF.NodeSet(:H))
     advv = CF.zeros_fd(T, gd, CF.NodeSet(:V))
     u, v, w = vel
@@ -45,18 +44,18 @@ function test_advection_exact(NZ)
         u0c = rand(Nk)
         u0(x, y, z) = u0z[2] * z + u0z[1] * (1 - z) + sum(u0s[i] * sin(i * y) + u0c[i] * cos(i * y) for i=1:Nk)
         du0(x, y, z) = sum(u0s[i] * i * cos(i * y) - u0c[i] * i * sin(i * y) for i=1:Nk)
-        CF.set_field!(u, ht, u0, gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(u, u0, gd, gm, ht, CF.NodeSet(:H))
         v .= 0
         w .= 0
         CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
-        CF.set_field!(advh, ht, (x,y,z) -> du0(x,y,z) * u0(x,y,z), gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(advh, (x,y,z) -> du0(x,y,z) * u0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[1] .+ 1 ≈ ones(eltype(u), size(u))
         if Nk == 6
             @test rhs[2] ≈ advh
         else
             @test !(rhs[2] ≈ advh)
         end
-        CF.set_field!(advv, ht, (x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(advv, (x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), gd, gm, ht, CF.NodeSet(:V))
         @test rhs[3] ≈ advv
     end
 
@@ -66,18 +65,18 @@ function test_advection_exact(NZ)
         v0c = rand(Nk)
         v0(x, y, z) = v0z[2] * z + v0z[1] * (1 - z) + sum(v0s[i] * sin(i * x) + v0c[i] * cos(i * x) for i=1:Nk)
         dv0(x, y, z) = sum(v0s[i] * i * cos(i * x) - v0c[i] * i * sin(i * x) for i=1:Nk)
-        CF.set_field!(v, ht, v0, gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(v, v0, gd, gm, ht, CF.NodeSet(:H))
         u .= 0
         w .= 0
         CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
-        CF.set_field!(advh, ht, (x,y,z) -> dv0(x,y,z) * v0(x,y,z), gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(advh, (x,y,z) -> dv0(x,y,z) * v0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         if Nk == 5
             @test rhs[1] ≈ advh
         else
             @test !(rhs[1] ≈ advh)
         end
         @test rhs[2] .+ 1 ≈ ones(eltype(v), size(v))
-        CF.set_field!(advv, ht, (x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(advv, (x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), gd, gm, ht, CF.NodeSet(:V))
         @test rhs[3] ≈ advv
     end
 
@@ -86,11 +85,11 @@ function test_advection_exact(NZ)
         w0c = rand(Nk)
         w0(x, y, z) = sum(w0s[i] * sin(i * x) + w0c[i] * cos(i * x) for i=1:Nk)
         dw0(x, y, z) = sum(w0s[i] * i * cos(i * x) - w0c[i] * i * sin(i * x) for i=1:Nk)
-        CF.set_field!(w, ht, w0, gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(w, w0, gd, gm, ht, CF.NodeSet(:V))
         u .= 0
         v .= 0
         CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
-        CF.set_field!(advh, ht, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(advh, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[2] .+ 1 ≈ ones(eltype(u), size(u))
         @test rhs[3] .+ 1 ≈ ones(eltype(w), size(w))
         P = CF.proc_type()
@@ -108,11 +107,11 @@ function test_advection_exact(NZ)
         w0c = rand(Nk)
         w0(x, y, z) = sum(w0s[i] * sin(i * y) + w0c[i] * cos(i * y) for i=1:Nk)
         dw0(x, y, z) = sum(w0s[i] * i * cos(i * y) - w0c[i] * i * sin(i * y) for i=1:Nk)
-        CF.set_field!(w, ht, w0, gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(w, w0, gd, gm, ht, CF.NodeSet(:V))
         u .= 0
         v .= 0
         CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
-        CF.set_field!(advh, ht, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gs, gd.iz_min, CF.NodeSet(:H))
+        CF.set_field!(advh, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[1] .+ 1 ≈ ones(eltype(u), size(u))
         @test rhs[3] .+ 1 ≈ ones(eltype(w), size(w))
         P = CF.proc_type()
@@ -129,7 +128,7 @@ end
 function advection_error_convergence(Nh, Nv)
 
     T = Float64
-    ds = (2*π, 2*π, 1.0)
+    gm = CF.GridMapping(2*π, 2*π, 1.0)
 
     # define horizontal function, periodic in [0, 2π]
     fh(x) = 2^sin(x) # periodic in [0, 2π]
@@ -167,9 +166,8 @@ function advection_error_convergence(Nh, Nv)
 
         gd = CF.DistributedGrid(Nx, Ny, Nz)
         ht = CF.HorizontalTransform(T, gd)
-        gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-        df = CF.DerivativeFactors(gd, ds)
-        ab = CF.AdvectionBuffers(T, gd, ds)
+        df = CF.DerivativeFactors(gd, gm)
+        ab = CF.AdvectionBuffers(gd, gm)
 
         lbcs = CF.bc_noslip(T, gd)
         ubcs = CF.bc_noslip(T, gd)
@@ -184,14 +182,14 @@ function advection_error_convergence(Nh, Nv)
                CF.zeros_fd(T, gd, CF.NodeSet(:H)),
                CF.zeros_fd(T, gd, CF.NodeSet(:V)))
 
-        CF.set_field!(vel[1], ht, u0, gs, gd.iz_min, CF.NodeSet(:H))
-        CF.set_field!(vel[2], ht, v0, gs, gd.iz_min, CF.NodeSet(:H))
-        CF.set_field!(vel[3], ht, w0, gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(vel[1], u0, gd, gm, ht, CF.NodeSet(:H))
+        CF.set_field!(vel[2], v0, gd, gm, ht, CF.NodeSet(:H))
+        CF.set_field!(vel[3], w0, gd, gm, ht, CF.NodeSet(:V))
         CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, ab)
 
-        CF.set_field!(adv[1], ht, advx, gs, gd.iz_min, CF.NodeSet(:H))
-        CF.set_field!(adv[2], ht, advy, gs, gd.iz_min, CF.NodeSet(:H))
-        CF.set_field!(adv[3], ht, advz, gs, gd.iz_min, CF.NodeSet(:V))
+        CF.set_field!(adv[1], advx, gd, gm, ht, CF.NodeSet(:H))
+        CF.set_field!(adv[2], advy, gd, gm, ht, CF.NodeSet(:H))
+        CF.set_field!(adv[3], advz, gd, gm, ht, CF.NodeSet(:V))
 
         ε1 = CF.global_maximum(abs.(rhs[1] .- adv[1]))
         ε2 = CF.global_maximum(abs.(rhs[2] .- adv[2]))

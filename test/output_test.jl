@@ -11,8 +11,8 @@ function test_file_io(; Nx=6, Ny=8, Nz=12)
             dmin, dmax = (zero(T), zero(T), zero(T)), ds
 
             gd = CF.DistributedGrid(Nx, Ny, Nz)
-            gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-            df = CF.DerivativeFactors(gd, ds)
+            gm = CF.GridMapping(ds...)
+            df = CF.DerivativeFactors(gd, gm)
             ht = CF.HorizontalTransform(T, gd)
             lbcs = CF.bc_noslip(T, gd)
             ubcs = CF.bc_noslip(T, gd)
@@ -21,8 +21,8 @@ function test_file_io(; Nx=6, Ny=8, Nz=12)
             y = LinRange(0, ds[2], gd.ny_pd+1)[1:gd.ny_pd]
             z = LinRange(0, ds[3], 2*Nz+1)[(ns == :H ? 2 : 3):2:end-1]
 
-            vel_fd = CF.set_field(gd, ht, vel0, gs, CF.NodeSet(ns))
-            vel_pd = CF.get_field(gd, ht, vel_fd, CF.NodeSet(ns))
+            vel_fd = CF.set_field(vel0, gd, gm, ht, CF.NodeSet(ns))
+            vel_pd = CF.get_field(vel_fd, gd, ht, CF.NodeSet(ns))
 
             for T_files=(Float32, Float64)
 
@@ -68,8 +68,8 @@ function test_shifted_file_output(T=Float64; Nx=6, Ny=8, Nz=12)
     ds = convert.(T, (2π, 2π, 1))
     dmin, dmax = (zero(T), zero(T), zero(T)), ds
     gd = CF.DistributedGrid(Nx, Ny, Nz)
-    gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
-    df = CF.DerivativeFactors(gd, ds)
+    gm = CF.GridMapping(ds...)
+    df = CF.DerivativeFactors(gd, gm)
     ht = CF.HorizontalTransform(T, gd)
     lbcs = CF.bc_noslip(T, gd)
     ubcs = CF.bc_noslip(T, gd)
@@ -82,11 +82,11 @@ function test_shifted_file_output(T=Float64; Nx=6, Ny=8, Nz=12)
     for NS = (:H, :V)
 
         ns = CF.NodeSet(NS)
-        vel_fd = CF.set_field(gd, ht, vel0, gs, ns)
+        vel_fd = CF.set_field(vel0, gd, gm, ht, ns)
 
         dmin_file, dmax_file, x_file, y_file, z_file, data_file = mktempdir_parallel() do p
             fn = joinpath(p, "vel.cbd")
-            CF.write_field(fn, vel_fd, ds, ht_file, sf_file, ns)
+            CF.write_field(fn, vel_fd, gm, ht_file, sf_file, ns)
             CF.read_field(fn, ns)
         end
 

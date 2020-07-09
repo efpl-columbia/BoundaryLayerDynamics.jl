@@ -3,7 +3,7 @@ Test that a standard channel flow with output can be run, including output,
 without producing an error.
 """
 function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
-    cf = closed_channel((Nh,Nh,Nv), Re, constant_flux = true)
+    cf = prepare_closed_channel(Re, (Nh,Nh,Nv), constant_flux = true)
     dt = (2/Nv)^2 * Re * CFL
     io = IOBuffer()
 
@@ -21,11 +21,14 @@ end
 
 include("laminar_flow_problems.jl")
 
-function test_laminar_flow_convergence(T, Nz_min = 3)
+function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false)
 
-    # use a progression of integers that are close to equidistant in log-space
+    # use a progression of small integers that are close to equidistant in log-space
     N = filter(n -> n>=Nz_min, [11, 14, 18, 24, 32])
     Random.seed!(363613674) # same seed for each process
+
+    # parameter for grid stretching, η ∈ [0.5, 0.75]
+    η = grid_stretching ? 0.5 + rand() / 4 : nothing
 
     # parameters for Poiseuille & Couette flow
     ν  = one(T) / 4 * 3 + rand(T) / 2
@@ -33,28 +36,28 @@ function test_laminar_flow_convergence(T, Nz_min = 3)
     δ  = one(T) / 4 * 3 + rand(T) / 2
     uτ = one(T) / 4 * 3 + rand(T) / 2
     t  = (δ^2 / ν) / 6
-    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν)
+    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν, η=η)
 
-    εp = poiseuille_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex)
-    εc =    couette_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex)
+    εp = poiseuille_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
+    εc =    couette_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
 
     # parameters for Taylor-Green vortex
     A  = one(T) / 4 * 3 + rand(T) / 2
     α  = one(T) / 4 * 3 + rand(T) / 2
     β  = one(T) / 4 * 3 + rand(T) / 2
     t = 1 / ((α^2 + β^2) * ν)
-    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t)
+    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t, Cmax=1/16)
 
-    εtgv = taylor_green_vortex_error.(T, 3, N, Nt, t=t, ν=ν, α=α, β=β, A=A, dir=ex)
-    εtgh = taylor_green_vortex_error.(T, 3, Nz_min, N,  t=t, ν=ν, α=α, β=β, A=A)
+    εtgv = taylor_green_vortex_error.(T, 3, N, Nt, t=t, ν=ν, α=α, β=β, A=A, dir=ex, η=η)
+    εtgh = taylor_green_vortex_error.(T, 3, Nz_min, N,  t=t, ν=ν, α=α, β=β, A=A, η=η)
 
-    @test εp[end] < 2e-3
-    @test εc[end] < 2e-3
+    @test εp[end] < 1e-3
+    @test εc[end] < 1e-3
     @test εtgv[end] < 2e-3
     @test εtgh[end] < 1e-5
 
-    test_convergence(N, εp, order=2)
-    test_convergence(N, εc, order=2)
+    test_convergence(N, εp, order=2, threshold_slope=0.9)
+    test_convergence(N, εc, order=2, threshold_slope=0.925)
     test_convergence(N, εtgv, order=2)
     test_convergence(N, εtgh, order=3)
 
@@ -78,7 +81,7 @@ function test_constant_flux_poiseuille(nz)
     ε(cf) = CF.global_sum(abs.(cf.velocity[1][1,1,:] .- u_exact[cf.grid.iz_min:cf.grid.iz_max])) / nz
 
     # compute errors for constant forcing first
-    cf1 = closed_channel((4, 4, nz), 1.0, constant_flux = false)
+    cf1 = prepare_closed_channel(1.0, (4, 4, nz), constant_flux = false)
 
     for i=1:nit
         integrate!(cf1, dt, nt, verbose=false)
@@ -86,8 +89,8 @@ function test_constant_flux_poiseuille(nz)
     end
 
     # compute errors for constant flux next
-    cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0), CF.zero_ics(Float64),
-                             CF.bc_noslip(), CF.bc_noslip(), 1.0, (mf, 0.0), true)
+    cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0),
+        CF.bc_noslip(), CF.bc_noslip(), 1.0, (mf, 0.0), true)
     for i=1:nit
         integrate!(cf2, dt, nt, verbose=false)
         ε_constant_flux[i] = ε(cf2)
@@ -106,6 +109,8 @@ MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))
 
 # test that laminar flow solutions converge at the right order
 test_laminar_flow_convergence(Float64, MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 3)
+test_laminar_flow_convergence(Float64, MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 3,
+                              grid_stretching = true)
 
 # test that a poiseuille flow driven by a constant flux converges faster
 test_constant_flux_poiseuille(16)

@@ -1,15 +1,3 @@
-const MTAG_UP = 8
-const MTAG_DN = 9
-
-printdirect(s...) = MPI.Initialized() ? println("process ", MPI.Comm_rank(MPI.COMM_WORLD) + 1, " ", s...) : println(s...)
-
-# NOTE: the views passed to these helper functions should have a range of indices
-# since zero-dimensional subarrays are not considered contiguous in julia 1.0
-send_to_proc_above(x) = MPI.Send(x, MPI.Comm_rank(MPI.COMM_WORLD) + 1, MTAG_UP, MPI.COMM_WORLD)
-send_to_proc_below(x) = MPI.Send(x, MPI.Comm_rank(MPI.COMM_WORLD) - 1, MTAG_DN, MPI.COMM_WORLD)
-get_from_proc_above!(x) = MPI.Recv!(x, MPI.Comm_rank(MPI.COMM_WORLD) + 1, MTAG_DN, MPI.COMM_WORLD)
-get_from_proc_below!(x) = MPI.Recv!(x, MPI.Comm_rank(MPI.COMM_WORLD) - 1, MTAG_UP, MPI.COMM_WORLD)
-
 """
 The DistributedBatchLDLt{P,Tm,Tv,B} holds the data of a decomposition A=L·D·Lᵀ
 for a batch of symmetric tridiagonal matrices A. The purpose is to solve a
@@ -182,66 +170,41 @@ end
 LinearAlgebra.ldiv!(x, A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(A, copyto!(x, b))
 LinearAlgebra.:\(A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(similar(b), A, b)
 
-# if kx=ky=0 (or i=j=1), the nz equations only have nz-1 entries that are
-# linearly independent, so we drop the last line and use it to set the mean
-# pressure at the top of the domain to (approximately) zero with
-# (-3p[nz]+p[nz-1])/δz²=0
-pressure_solver_diagonal(gd::DistributedGrid{SingleProc}, df::DerivativeFactors{T}, i, j) where T =
-        df.dx2[i] .+ df.dy2[j] .- df.dz2 *
-        T[one(T); 2 * ones(T, get_nz(gd, NodeSet(:H))-2); one(T) * (i==j==1 ? 3 : 1)]
-pressure_solver_diagonal(gd::DistributedGrid{MinProc}, df::DerivativeFactors{T}, i, j) where T =
-        df.dx2[i] .+ df.dy2[j] .- df.dz2 *
-        T[one(T); 2 * ones(T, get_nz(gd, NodeSet(:H))-1)]
-pressure_solver_diagonal(gd::DistributedGrid{InnerProc}, df::DerivativeFactors{T}, i, j) where T =
-        df.dx2[i] .+ df.dy2[j] .- df.dz2 *
-        T[2 * ones(T, get_nz(gd, NodeSet(:H)));]
-pressure_solver_diagonal(gd::DistributedGrid{MaxProc}, df::DerivativeFactors{T}, i, j) where T =
-        df.dx2[i] .+ df.dy2[j] .- df.dz2 *
-        T[2 * ones(T, get_nz(gd, NodeSet(:H))-1); one(T) * (i==j==1 ? 3 : 1)]
-pressure_solver_offdiagonal(gd::DistributedGrid, df::DerivativeFactors{T}) where T =
-        df.dz2 * ones(T, get_nz(gd, NodeSet(:V)))
+# Compute the diagonal of D₃G₃, excluding the αc-factor: -α(1), -α(1)-α(2), …, -α(N-2)-α(N-1), -α(N-1)
+function d3g3_diagonal(T, gd, gm)
+    αi_ext = T[gd.nz_global / gm.Dvmap(ζ) for ζ=vrange(T, gd, NodeSet(:H), neighbors=true)]
+    imin = gd.iz_min == 1 ? 2 : 1 # exclude value at lower boundary
+    imax = gd.nz_v # exclude value at upper boundary
+    dvs = zeros(T, gd.nz_h)
+    dvs[imin:end] .-= αi_ext[imin:end-1]
+    dvs[1:imax] .-= αi_ext[2:imax+1]
+    dvs
+end
 
-prepare_pressure_solver(gd::DistributedGrid, df::DerivativeFactors{T}, batch_size) where T =
-        DistributedBatchLDLt(T, (pressure_solver_diagonal(gd, df, i, j) for i=1:gd.nx_fd, j=1:gd.ny_fd),
-        (pressure_solver_offdiagonal(gd, df) for i=1:gd.nx_fd, j=1:gd.ny_fd),
-        zeros_fd(T, gd, NodeSet(:H)), batch_size)
+# Compute the off-diagonal of D₃G₃, excluding the αc-factor: α(0), α(1), …, α(N-1)
+function d3g3_offdiagonal(T, gd, gm)
+    T[gd.nz_global / gm.Dvmap(ζ) for ζ=vrange(T, gd, NodeSet(:V))]
+end
 
-
-@inline div!(div, u, v, w¯, w⁺, dx, dy, dz) =
-    (@. div = u * dx + v * dy + (w⁺ - w¯) * dz; div)
-@inline div!(div, u, v, w¯::DirichletBC, w⁺, dx, dy, dz) =
-    (@. div = u * dx + v * dy + w⁺ * dz; div[1,1] -= w¯.value * dz; div)
-@inline div!(div, u, v, w¯, w⁺::DirichletBC, dx, dy, dz) =
-    (@. div = u * dx + v * dy - w¯ * dz; div[1,1] += w⁺.value * dz; div)
-
-
-function set_divergence!(div_layers::NTuple{NZH},
-    u_layers::NTuple{NZH}, v_layers::NTuple{NZH},  w_layers::NTuple{NZV},
-    lower_bcw::BoundaryCondition, upper_bcw::BoundaryCondition,
-    df::DerivativeFactors) where {NZH,NZV}
-
-    w_below = get_layer_below(w_layers, lower_bcw)
-
-    if NZV >= 1
-        # as long as there is at least one local w-layer, the first layer is
-        # computed with the w below and the first w-layer
-        div!(div_layers[1], u_layers[1], v_layers[1], w_below, w_layers[1], df.dx1, df.dy1, df.dz1)
-        # add the remaining layers that are using local w-layers
-        for i=2:NZV
-            div!(div_layers[i], u_layers[i], v_layers[i], w_layers[i-1], w_layers[i], df.dx1, df.dy1, df.dz1)
-        end
-        # if this is the highest process, there is an extra layer to be computed
-        # using the top boundary condition
-        if NZH > NZV
-            div!(div_layers[end], u_layers[end], v_layers[end], w_layers[end], upper_bcw, df.dx1, df.dy1, df.dz1)
-        end
-    else
-        # if there are no local w-layers (highest process with one layer per
-        # process), a single layer is computed with the w below and the upper BC
-        div!(div_layers[1], u_layers[1], v_layers[1], w_below, upper_bcw, df.dx1, df.dy1, df.dz1)
-    end
-
-    div_layers
+"""
+For k1=k2=0, we want to replace the last equation of the linear system with the
+equation 3 p(N₃-1/2) - p(N₃-3/2) = 0, which (approximately) sets the mean
+pressure at the top of the domain to zero. To retain the symmetry of the
+matrix, this function computes the last value of the off-diagonal and and sets
+the last value of the diagonal to minus three times that value. For this to
+work correctly, the last entry of the vector for which the system is solved
+should also be set to zero. Otherwise, the solver will still work correctly but
+the pressure will differ by some additive factor.
+"""
+function adjust_d3g3_diagonal(dvs, gd, gm)
+    gd.iz_max == gd.nz_global || return dvs # only adjust at the very top
+    # the last off-diagonal value is evaluated at the last I-node, which might
+    # already belong to the process below, so we select it as the lower
+    # neighbor of the last C-node
+    last_ζi = vrange(eltype(dvs), gd, NodeSet(:H), neighbors=true)[end-1]
+    last_ev = gd.nz_global / gm.Dvmap(last_ζi)
+    dvs[end] = - 3 * last_ev
+    dvs
 end
 
 # for kx=ky=0, the top and bottom boundary condition have to be the same,
@@ -260,37 +223,108 @@ end
 # it could also be done by replacing a different line in order to get a
 # higher order approximation at the boundary, but there is little reason to
 # do so, since the absolute values don’t matter anyway.
-set_top_pressure(p, bc_pressure::DirichletBC{HighestProc}) =
-        (p[1,1,end] = bc_pressure.value; p)
-set_top_pressure(p, bc_pressure) = p # other processes do nothing
+adjust_pressure_rhs!(p, gd) = (gd.iz_max == gd.nz_global) ? (p[1,1,end] = 0; p) : p
 
-"""
-This computes a pressure field `p`, the gradient of which can be added to the
-velocity field vel_hat to make it divergence free. Note that in a time stepping
-algorithm, we usually want (vel + dt ∇ p) to be divergence free. In this case,
-we simply solve for dt·p with the following algorithm.
-"""
-function solve_pressure!(p, vel::Tuple, lower_bcs::Tuple, upper_bcs::Tuple,
-        bc_pressure, df::DerivativeFactors, p_solver::DistributedBatchLDLt)
-    # since the solver works in-place, we set p to the divergence of vel
-    set_divergence!(layers(p), layers(vel[1]), layers(vel[2]), layers(vel[3]),
-            lower_bcs[3], upper_bcs[3], df)
-    set_top_pressure(p, bc_pressure)
-    LinearAlgebra.ldiv!(p_solver, p)
+function prepare_pressure_solver(gd::DistributedGrid, gm::GridMapping{T}, batch_size) where T
+
+    # compute off-diagonal terms
+    ps_offdiagonal = d3g3_offdiagonal(T, gd, gm)
+
+    # set up function to compute diagonal terms of matrix
+    d3g3 = d3g3_diagonal(T, gd, gm)
+    αc = T[gd.nz_global / gm.Dvmap(ζ) for ζ=vrange(T, gd, NodeSet(:H))]
+    ps_diagonal(k1, k2) = (k1 == k2 == 0) ? adjust_d3g3_diagonal(copy(d3g3), gd, gm) :
+        T[d3g3[i] - 4 * π^2 * (k1^2 / gm.hsize1^2 + k2^2 / gm.hsize2^2) ./ αc[i] for i=1:gd.nz_h]
+
+    # set up generators that produce diagonals for each wavenumber pair
+    # note: the offdiagonal is always the same so the generator simply returns
+    # the precomputed array
+    k1, k2 = wavenumbers(gd)
+    dvs = (ps_diagonal(k1, k2) for k1=k1, k2=k2)
+    evs = (ps_offdiagonal for k1=k1, k2=k2)
+
+    DistributedBatchLDLt(T, dvs, evs, zeros_fd(T, gd, NodeSet(:H)), batch_size)
 end
 
-function subtract_pressure_gradient!(vel::Tuple, p, df::DerivativeFactors, bc_pressure)
-    @. vel[1] -= p .* df.dx1
-    @. vel[2] -= p .* df.dy1
-    p_above = get_layer_above(layers(p), bc_pressure)
-    for iz=1:size(p, 3)-1
-        #TODO @. vel[3][:,:,iz] = view(vel[3], :, :, iz) - (view(p, :, :, iz+1) - view(p, :, :, iz)) * df.dz1
-        vel[3][:,:,iz] .= view(vel[3], :, :, iz) .-
-                (view(p, :, :, iz+1) .- view(p, :, :, iz)) .* df.dz1
+# Set the output to the divergence of the input, but using 1/N₃ ∂/∂ζ instead of
+# ∂/∂x₃ in the vertical direction. This is required to build the RHS of the
+# pressure solver.
+function set_divergence_rescaled!(div, vel, (lbc3, ubc3), gd, df)
+
+    u1 = layers(vel[1])
+    u2 = layers(vel[2])
+    u3_expanded = layers_expand_i_to_c(vel[3], lbc3, ubc3)
+
+    for (i, div) in zip(1:size(div, 3), layers(div))
+        hfactor = 1/df.D3_h[i] # TODO: this might be best computed directly
+        div!(div, u1[i], u2[i], u3_expanded[i:i+1], df.D1, df.D2, 1, hfactor)
     end
-    if !(p_above isa BoundaryCondition)
-        vel[3][:,:,end] .= view(vel[3], :, :, size(vel[3], 3)) .-
-                (p_above .- view(p, :, :, size(p,3))) .* df.dz1
-    end
+
+    div
+end
+
+"""
+The pressure solver computes a pressure field `p` such that the provided
+velocity field becomes divergence-free when the pressure gradient is
+subtracted, i.e. `∇·(u − ∇p) = 0`. The solver only requires boundary conditions
+for the vertical velocity component due to the way the staggered grid is set
+up.
+
+Note that the formulation of this solver does not correspond exactly to the way
+pressure appears in the Navier-Stokes equations and the problem has to be
+rescaled to apply the solver. It is important that the provided boundary
+conditions are compatible with the rescaled problem.
+
+In practice, the solver is employed in two different ways. One option is to
+apply it to a velocity field to obtain its projection into a divergence-free
+space. This corresponds more or less to the formulation given above, but the
+pressure does not really have a physical meaning in this case. The other option
+is to apply it to one or all terms of the RHS to obtain the pressure field they
+induce. In this case, the `u` of the solver is really a `∂u/∂t` and the
+boundary conditions provided to the pressure solver should be those of the time
+derivative of the velocity, i.e. constant values becomes zero.
+
+The second option is useful for obtaining pressure fields in post-processing,
+but for time stepping it is best to rely on the first formulation and apply the
+the solver to `u + Δt RHS` rather than directly to `RHS`. Otherwise, errors can
+accumulate in `u` and the solution may drift away from a divergence-free flow
+field over time.
+"""
+function solve_pressure!(p, vel, lbcs, ubcs, gd, df, solver)
+
+    # the formulation of the pressure solver matrix implicitly relies on the
+    # assumption that the vertical velocity component has Dirichlet boundary
+    # conditions
+    (lbcs[3] isa DirichletBC && ubcs[3] isa DirichletBC) ||
+        error("The pressure solver only supports Dirichlet BCs")
+
+    # since the linear solver works in-place, we save the velocity divergence
+    # to the pressure array
+    set_divergence_rescaled!(p, vel, (lbcs[3], ubcs[3]), gd, df)
+
+    # when k1=k2=0, one equation is redundant (as long as the mean flow at the
+    # top and bottom is the same, which is required for mass conservation) and
+    # is overwritten here to set the absolute value of pressure to zero at the
+    # top of the domain
+    (lbcs[3].value == ubcs[3].value) ||
+        error("The mean flow must be equal at both vertical boundaries.")
+    adjust_pressure_rhs!(p, gd)
+
+    LinearAlgebra.ldiv!(solver, p)
+end
+
+struct PressureSolver{P,T}
+    pressure::Array{Complex{T},3}
+    solver::DistributedBatchLDLt{P,T,Complex{T}}
+    pressure_bc::UnspecifiedBC
+    PressureSolver(gd, gm::GridMapping{T}, batch_size) where T = new{proc_type(),T}(
+            zeros_fd(T, gd, NodeSet(:H)),
+            prepare_pressure_solver(gd, gm, batch_size),
+            UnspecifiedBC(T, gd))
+end
+
+function enforce_continuity!(vel, lbcs, ubcs, gd, df, ps::PressureSolver)
+    solve_pressure!(ps.pressure, vel, lbcs, ubcs, gd, df, ps.solver)
+    add_gradient!(vel, ps.pressure, ps.pressure_bc::UnspecifiedBC, df, -1)
     vel
 end

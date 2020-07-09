@@ -10,8 +10,9 @@ function test_closed_channel_les(n)
     Re = 1e5
     f = (1.0, 0.0)
 
-    cfp = ChannelFlowProblem(gs, ds, ic, lbcs, ubcs, 1/Re, f, false,
+    cfp = ChannelFlowProblem(gs, ds, lbcs, ubcs, 1/Re, f, false,
                              sgs_model = StaticSmagorinskyModel())
+    set_velocity!(cfp, ic)
 
     # compute advection term for constant velocity
     CF.set_advection!(cfp.rhs, cfp.velocity, cfp.derivatives, cfp.transform,
@@ -23,11 +24,10 @@ function test_closed_channel_les(n)
     @test global_vector(cfp.rhs[1][1,1,:]) ≈ [1; zeros(n-2); 1] * τw * u1 / utot / (-ds[3]/n)
     @test global_vector(cfp.rhs[2][1,1,:]) ≈ [1; zeros(n-2); 1] * τw * u2 / utot / (-ds[3]/n)
 
-    # compute avdection term for linear velocity field
+    # compute advection term for linear velocity field
     dudz = 0.40595
-    gdsp = cfp.domain_size ./ (cfp.grid.nx_pd, cfp.grid.ny_pd, cfp.grid.nz_global)
-    CF.set_field!(cfp.velocity[1], cfp.transform, (x,y,z) -> (z - 1) * dudz,
-                  gdsp, cfp.grid.iz_min, CF.NodeSet(:H))
+    CF.set_field!(cfp.velocity[1], (x,y,z) -> (z - 1) * dudz,
+                  cfp.grid, cfp.mapping, cfp.transform, CF.NodeSet(:H))
     cfp.velocity[2] .= 0
     cfp.velocity[3] .= 0
     CF.set_advection!(cfp.rhs, cfp.velocity, cfp.derivatives, cfp.transform,
@@ -68,8 +68,9 @@ function test_open_channel_les(n)
     Re = 1e5
     f = (1.0, 0.0)
 
-    cfp = ChannelFlowProblem(gs, ds, ic, lbcs, ubcs, 1/Re, f, false,
+    cfp = ChannelFlowProblem(gs, ds, lbcs, ubcs, 1/Re, f, false,
                              sgs_model = StaticSmagorinskyModel())
+    set_velocity!(cfp, ic)
 
     # check thar integration runs without error
     dt = 1e-3
@@ -78,6 +79,6 @@ function test_open_channel_les(n)
 
 end
 
-# TODO: also run with one layer per process
 test_closed_channel_les(16)
+MPI.Initialized() && test_closed_channel_les(MPI.Comm_size(MPI.COMM_WORLD))
 test_open_channel_les(16)

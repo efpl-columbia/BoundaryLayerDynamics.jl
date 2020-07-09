@@ -37,7 +37,7 @@ function collect_statistics!(stats::MeanStatistics, vel, lbcs, ubcs, df)
 
     add_profiles!(stats.profiles, vel, (u1b, u2b, u3b), (u1a, u2a, u3a), df)
     add_spectra!(stats.spectra, layers(vel[1]), layers(vel[2]),
-                 layers_expand_half_v(vel[3], lbcs[3], ubcs[3]))
+                 layers_expand_i_to_c(vel[3], lbcs[3], ubcs[3]))
     stats.counter[] += 1
 end
 

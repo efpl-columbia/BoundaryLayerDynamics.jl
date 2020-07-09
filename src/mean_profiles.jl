@@ -48,15 +48,15 @@ function add_profiles!(profiles::MeanProfiles, vel, (u1b, u2b, u3b), (u1a, u2a, 
         profiles.vwb[:] .+= avg_prod_from_fd.(layers(vel[2]), u3b)
     end
     TimerOutputs.@timeit "save diffusion terms" begin
-        profiles.uxux[:] .+= avg_sq_dx_from_fd.(layers(vel[1]), (df.dx1,))
-        profiles.vxvx[:] .+= avg_sq_dx_from_fd.(layers(vel[2]), (df.dx1,))
-        profiles.wxwx[:] .+= avg_sq_dx_from_fd.(layers(vel[3]), (df.dx1,))
-        profiles.uyuy[:] .+= avg_sq_dy_from_fd.(layers(vel[1]), (df.dy1,))
-        profiles.vyvy[:] .+= avg_sq_dy_from_fd.(layers(vel[2]), (df.dy1,))
-        profiles.wywy[:] .+= avg_sq_dy_from_fd.(layers(vel[3]), (df.dy1,))
-        profiles.uzuz[:] .+= avg_sq_dz_from_fd.(u1b, u1a, (df.dz1,))
-        profiles.vzvz[:] .+= avg_sq_dz_from_fd.(u2b, u2a, (df.dz1,))
-        profiles.wzwz[:] .+= avg_sq_dz_from_fd.(u3b, u3a, (df.dz1,))
+        profiles.uxux[:] .+= avg_sq_dx1_from_fd.(layers(vel[1]), (df.D1,))
+        profiles.vxvx[:] .+= avg_sq_dx1_from_fd.(layers(vel[2]), (df.D1,))
+        profiles.wxwx[:] .+= avg_sq_dx1_from_fd.(layers(vel[3]), (df.D1,))
+        profiles.uyuy[:] .+= avg_sq_dx2_from_fd.(layers(vel[1]), (df.D2,))
+        profiles.vyvy[:] .+= avg_sq_dx2_from_fd.(layers(vel[2]), (df.D2,))
+        profiles.wywy[:] .+= avg_sq_dx2_from_fd.(layers(vel[3]), (df.D2,))
+        profiles.uzuz[:] .+= avg_sq_dx3_from_fd.(u1b, u1a, df.D3_v)
+        profiles.vzvz[:] .+= avg_sq_dx3_from_fd.(u2b, u2a, df.D3_v)
+        profiles.wzwz[:] .+= avg_sq_dx3_from_fd.(u3b, u3a, df.D3_h)
     end
     profiles
 end
@@ -123,38 +123,38 @@ avg_prod_from_fd(vel1::AbstractArray{Complex{T},2}, vel2::AbstractArray{Complex{
 avg_prod_from_fd(vel::AbstractArray{Complex{T},2}, bc::DirichletBC) where T =
         bc.value * real(vel[1,1])
 
-function avg_sq_dx_from_fd(vel::AbstractArray{Complex{T},2}, dx) where T
+function avg_sq_dx1_from_fd(vel::AbstractArray{Complex{T},2}, D1) where T
     sum = zero(T)
     for j = 1:size(vel,2)
-        sum += abs2(vel[1,j] * dx[1]) # dx[i=1] should be zero
+        sum += abs2(vel[1,j] * D1[1]) # dx[i=1] should be zero
         for i = 2:size(vel,1)
-            sum += 2 * abs2(vel[i,j] * dx[i])
+            sum += 2 * abs2(vel[i,j] * D1[i])
         end
     end
     sum
 end
-function avg_sq_dy_from_fd(vel::AbstractArray{Complex{T},2}, dy) where T
+function avg_sq_dx2_from_fd(vel::AbstractArray{Complex{T},2}, D2) where T
     sum = zero(T)
     for j = 1:size(vel,2) # dy[j=1] should be zero
-        sum += abs2(vel[1,j] * dy[j])
+        sum += abs2(vel[1,j] * D2[j])
         for i = 2:size(vel,1)
-            sum += 2 * abs2(vel[i,j] * dy[j])
+            sum += 2 * abs2(vel[i,j] * D2[j])
         end
     end
     sum
 end
-function avg_sq_dz_from_fd(vel_below::AbstractArray{Complex{T},2},
-                           vel_above::AbstractArray{Complex{T},2}, dz) where T
+function avg_sq_dx3_from_fd(vel_below::AbstractArray{Complex{T},2},
+                            vel_above::AbstractArray{Complex{T},2}, D3) where T
     sum = zero(T)
     for j = 1:size(vel_below,2)
-        sum += abs2((vel_above[1,j] - vel_below[1,j]) * dz)
+        sum += abs2((vel_above[1,j] - vel_below[1,j]) * D3)
         for i = 2:size(vel_below,1)
-            sum += 2 * abs2((vel_above[i,j] - vel_below[i,j]) * dz)
+            sum += 2 * abs2((vel_above[i,j] - vel_below[i,j]) * D3)
         end
     end
     sum
 end
-avg_sq_dz_from_fd(bc_below::DirichletBC, vel_above::AbstractArray{Complex{T},2}, dz) where T =
+avg_sq_dx3_from_fd(bc_below::DirichletBC, vel_above::AbstractArray{Complex{T},2}, dz) where T =
         abs2((vel_above[1,1] - bc_below.value) * dz)
-avg_sq_dz_from_fd(vel_below::AbstractArray{Complex{T},2}, bc_above::DirichletBC, dz) where T =
+avg_sq_dx3_from_fd(vel_below::AbstractArray{Complex{T},2}, bc_above::DirichletBC, dz) where T =
         abs2((bc_above.value - vel_below[1,1]) * dz)

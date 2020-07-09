@@ -85,17 +85,24 @@ Compute the number of time steps necessary for viscous stability given a
 maximum Courant number. The default Cmax of 1/2 appears to be stable for the
 laminar problems in this file and the default SSP-RK33 time stepping.
 """
-Nt_viscous(T, Nz; δ = one(T), ν = one(T), t = one(T), Cmax = one(T)/2) =
-        ceil(Int, t * ν / (Cmax * (2*δ/Nz)^2)) # dtmax = Cmax dz²/ν
+Nt_viscous(T, Nz; δ = one(T), ν = one(T), t = one(T), Cmax = one(T)/2, η = nothing) =
+        ceil(Int, t * ν / (Cmax * dx3_min(δ, Nz, η)^2)) # dtmax = Cmax dz²/ν
+
+dx3_min(δ, N3, η::Nothing) = 2 * δ / N3
+function dx3_min(δ::T, N3, η::T) where T
+    x3, Dx3 = CF.instantiate(SinusoidalMapping(η), 2*δ, false)
+    ζ = LinRange(zero(T), one(T), 2*N3+1) # all nodes
+    minimum(Dx3.(ζ)) / N3
+end
 
 function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
-        t = one(T), ν = one(T), δ = one(T), vel_bc = zero(T), f = zero(T), dir = (one(T), zero(T)))
+        t = one(T), ν = one(T), δ = one(T), vel_bc = zero(T), f = zero(T),
+        dir = (one(T), zero(T)), η = nothing)
 
     dir = dir ./ sqrt(sum(dir.^2)) # normalize direction vector
-    cf = CF.ChannelFlowProblem(
+    cf = ChannelFlowProblem(
         (Nh, Nh, Nv), # grid resolution
-        (1.0, 1.0, 2*δ), # domain size
-        CF.zero_ics(T), # initial conditions
+        (1.0, 1.0, isnothing(η) ? 2*δ : CF.instantiate(SinusoidalMapping(η), 2*δ, false)), # domain size
         ("Dirichlet" => -vel_bc * dir[1], "Dirichlet" => -vel_bc * dir[2], "Dirichlet"), # lower BC
         ("Dirichlet" =>  vel_bc * dir[1], "Dirichlet" =>  vel_bc * dir[2], "Dirichlet"), # upper BC
         ν, # kinematic viscosity
@@ -105,27 +112,24 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
     integrate!(cf, t / Nt, Nt, verbose=false)
     vel = CF.get_velocity(cf)
 
-    # need to get local vector of z-values here, for H-nodes
-    # coords(
-    #uref = T[u_exact(z, t) for x=0:0, y=0:0, z=LinRange(0, 2*δ, 2*Nv+1)[2:2:end-1]]
-    uref = T[u_exact(x[3], t) for x=CF.coords(cf, CF.NodeSet(:H))]
+    uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=CF.x3(cf.grid, cf.mapping, CF.NodeSet(:H))]
     εu1 = vel[1] .- uref * dir[1]
     εu2 = vel[2] .- uref * dir[2]
-    # TODO: use interpolation across MPI boundaries for this
-    #εu3 = cat(vel[3][:,:,1]/2, (vel[3][:,:,1:end-1]+vel[3][:,:,2:end])/2, vel[3][:,:,end]/2, dims=3)
     εu3 = CF.interpolate(vel[3], cf.lower_bcs[3], cf.upper_bcs[3])
 
-    # maximum relative error, with a safety factor for when the norm of the velocity is zero
-    sqrt(CF.global_maximum((abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) ./ (abs2.(uref) .+ 64*eps())))
+    # maximum relative error, based on global velocity to avoid division by zero
+    sqrt(CF.global_maximum(abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) / CF.global_maximum(abs2.(uref)))
 end
 
-poiseuille_error(T, Nh, Nv, Nt; t = one(T) / 4, ν = one(T), δ = one(T), uτ = one(T), dir = (one(T), zero(T))) =
+poiseuille_error(T, Nh, Nv, Nt; t = one(T) / 4, ν = one(T), δ = one(T), uτ = one(T),
+                 dir = (one(T), zero(T)), η = nothing) =
     laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * poiseuille(y / δ, t * ν / δ^2),
-    t=t, ν=ν, δ=δ, dir=dir, f=(uτ^2/δ))
+    t=t, ν=ν, δ=δ, dir=dir, f=(uτ^2/δ), η=η)
 
-couette_error(T, Nh, Nv, Nt; t = one(T) / 16, ν = one(T), δ = one(T), uτ = one(T), dir = (one(T), zero(T))) =
+couette_error(T, Nh, Nv, Nt; t = one(T) / 16, ν = one(T), δ = one(T), uτ = one(T),
+              dir = (one(T), zero(T)), η = nothing) =
     laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * couette(y/δ, t*ν/δ^2),
-    t=t, ν=ν, δ=δ, dir=dir, vel_bc=(uτ*uτ*δ/ν))
+    t=t, ν=ν, δ=δ, dir=dir, vel_bc=(uτ*uτ*δ/ν), η=η)
 
 """
 Return the error for a Taylor-Green vortex with a given set of parameters and a
@@ -136,28 +140,31 @@ direction we cannot set an arbitrary orientation since we have to be able to
 find a domain size for which the problem is periodic.
 """
 function taylor_green_vortex_error(T, Nh, Nv, Nt;
-        t = one(T), ν = one(T), α = one(T), β = one(T), A = one(T), dir = (zero(T), zero(T)))
+        t = one(T), ν = one(T), α = one(T), β = one(T), A = one(T),
+        dir = (zero(T), zero(T)), η = nothing)
 
     λ = α / β
     B = - A * λ
 
     ds, u1ref, u2ref, u3ref = if dir[1] == dir[2] == zero(T)
         # vortex in horizontal plane
-        ((2*π/α, 2*π/β, one(T)),
+        ((2*π/α, 2*π/β, isnothing(η) ? one(T) : CF.instantiate(SinusoidalMapping(η), one(T), false)),
         (x,y,z,t) -> A * taylor_green_vortex_u1(β*x, β*y, β^2*ν*t, λ),
         (x,y,z,t) -> B * taylor_green_vortex_u2(β*x, β*y, β^2*ν*t, λ),
         (x,y,z,t) -> zero(T))
     else
         # vortex in vertical plane
         dir = dir ./ sqrt(sum(dir.^2)) # normalize direction vector
-        ((iszero(dir[1]) ? one(T) : 2*π/α/dir[1], iszero(dir[2]) ? one(T) : 2*π/α/dir[2], π/β),
+        ((iszero(dir[1]) ? one(T) : 2*π/α/dir[1], iszero(dir[2]) ? one(T) : 2*π/α/dir[2],
+          isnothing(η) ? π/β : CF.instantiate(SinusoidalMapping(η), π/β, false)),
         (x,y,z,t) -> A * taylor_green_vortex_u1(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ) * dir[1],
         (x,y,z,t) -> A * taylor_green_vortex_u1(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ) * dir[2],
         (x,y,z,t) -> B * taylor_green_vortex_u2(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ))
     end
 
     ic = Tuple((x,y,z) -> uref(x,y,z,zero(T)) for uref=(u1ref, u2ref, u3ref))
-    cf = CF.ChannelFlowProblem((Nh, Nh, Nv), ds, ic, CF.bc_freeslip(), CF.bc_freeslip(), ν, (zero(T), zero(T)), false)
+    cf = ChannelFlowProblem((Nh, Nh, Nv), ds, CF.bc_freeslip(), CF.bc_freeslip(), ν, (zero(T), zero(T)), false)
+    set_velocity!(cf, ic)
     integrate!(cf, t / Nt, Nt, verbose=false)
     vel = CF.get_velocity(cf)
 
@@ -177,7 +184,7 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
           CF.interpolate(ε, cf.lower_bcs[3], cf.upper_bcs[3]))
             #cat(ε[:,:,1]/2, (ε[:,:,2:end].+ε[:,:,1:end-1])/2, ε[:,:,end]/2, dims=3))
 
-    # maximum relative error, with a safety factor for when the norm of the velocity is zero
-    sqrt(CF.global_maximum((abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) ./ T[abs2(u1ref(x...,t)) +
-        abs2(u2ref(x...,t)) + abs2(u3ref(x...,t)) + 64*eps() for x=xh]))
+    # maximum relative error, based on global velocity to avoid divison by zero
+    sqrt(CF.global_maximum(abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) / CF.global_maximum(
+        T[abs2(u1ref(x...,t)) + abs2(u2ref(x...,t)) + abs2(u3ref(x...,t)) for x=xh]))
 end

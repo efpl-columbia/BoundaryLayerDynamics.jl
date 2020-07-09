@@ -5,8 +5,8 @@ function test_diffusion(NZ)
 
     gd, ht, uh, uv = setup_random_fields(Float64, 12, 14, NZ)
     ds = (2*π, 2*π, 1.0)
-    df = CF.DerivativeFactors(gd, ds)
-    gs = ds ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+    gm = CF.GridMapping(ds...)
+    df = CF.DerivativeFactors(gd, gm)
 
     # some functions to test dirichlet & neumann boundary conditions
     rval = 0.9134954544827887
@@ -30,25 +30,25 @@ function test_diffusion(NZ)
 
     # check 2nd derivative for H-nodes with Dirichlet BCs
     randomize!(uh, rhsh_pd)
-    CF.set_field!(uh, ht, u0d, gs, gd.iz_min, CF.NodeSet(:H))
+    CF.set_field!(uh, u0d, gd, gm, ht, CF.NodeSet(:H))
     rhs = CF.zeros_fd(Float64, gd, CF.NodeSet(:H))
-    CF.add_diffusion!(rhs, uh, bcd1, bcd2, ν, df, CF.NodeSet(:H))
+    CF.add_laplacian!(rhs, uh, bcd1, bcd2, df, CF.NodeSet(:H), ν)
     CF.get_field!(rhsh_pd, ht, rhs, CF.NodeSet(:H))
     @test global_vector(rhsh_pd[5,8,:]) ≈ ν * [Lu0d(2*π*4/18, 2*π*7/21, z) for z=z_h]
 
     # check 2nd derivative for H-nodes with Neumann BCs
     randomize!(uh, rhsh_pd)
-    CF.set_field!(uh, ht, u0n, gs, gd.iz_min, CF.NodeSet(:H))
+    CF.set_field!(uh, u0n, gd, gm, ht, CF.NodeSet(:H))
     rhs = CF.zeros_fd(Float64, gd, CF.NodeSet(:H))
-    CF.add_diffusion!(rhs, uh, bcn1, bcn2, ν, df, CF.NodeSet(:H))
+    CF.add_laplacian!(rhs, uh, bcn1, bcn2, df, CF.NodeSet(:H), ν)
     CF.get_field!(rhsh_pd, ht, rhs, CF.NodeSet(:H))
     @test global_vector(rhsh_pd[5,8,:]) ≈ ν * [Lu0n(2*π*4/18, 2*π*7/21, z) for z=z_h]
 
     # check 2nd derivative for V-nodes with Dirichlet BCs
     randomize!(uv, rhsv_pd)
-    CF.set_field!(uv, ht, u0d, gs, gd.iz_min, CF.NodeSet(:V))
+    CF.set_field!(uv, u0d, gd, gm, ht, CF.NodeSet(:V))
     rhs = CF.zeros_fd(Float64, gd, CF.NodeSet(:V))
-    CF.add_diffusion!(rhs, uv, bcd1, bcd2, ν, df, CF.NodeSet(:V))
+    CF.add_laplacian!(rhs, uv, bcd1, bcd2, df, CF.NodeSet(:V), ν)
     CF.get_field!(rhsv_pd, ht, rhs, CF.NodeSet(:V))
     @test global_vector(rhsv_pd[5,8,:]) ≈ ν * [Lu0d(2*π*4/18, 2*π*7/21, z) for z=z_v]
 

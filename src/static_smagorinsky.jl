@@ -16,9 +16,10 @@ struct RoughWallEquilibriumBC{P,T} <: SolidWallBC{P,T}
 end
 
 RoughWallEquilibriumBC(roughness_length::T, gd::DistributedGrid,
-                       ds::NTuple{3,T}; kappa::T = convert(T, 0.4)) where T =
+                       gm::GridMapping{T}; kappa::T = convert(T, 0.4)) where T =
                        RoughWallEquilibriumBC(roughness_length, kappa,
-                       ds[3] / (2*gd.nz_global), (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
+                       gm.vmap(one(T)/(2*gd.nz_global)),
+                       (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
 struct StaticSmagorinskyModel{T1,T2}
     model_constant::T1
@@ -29,34 +30,32 @@ end
 StaticSmagorinskyModel(; Cs = 0.1, wall_damping=false, wall_damping_exponent=2) =
         StaticSmagorinskyModel(Cs, wall_damping, wall_damping_exponent)
 
-i3range(gd, ::NodeSet{:H}) = gd.iz_min:(gd.iz_min + gd.nz_h - 1)
-i3range(gd, ::NodeSet{:V}) = gd.iz_min:(gd.iz_min + gd.nz_v - 1)
-x3range(gd, L3, ns::NodeSet{:H}) = (L3 / gd.nz_global) * (i3range(gd, ns).-1/2)
-x3range(gd, L3, ns::NodeSet{:V}) = (L3 / gd.nz_global) * i3range(gd, ns)
 mixing_length(x3, bcs::Tuple{NeumannBC,NeumannBC,DirichletBC}) = Inf
 mixing_length(x3, bcs::Tuple{RoughWallEquilibriumBC,RoughWallEquilibriumBC,DirichletBC}) =
         x3 * equivalently(bcs[1].von_karman_constant, bcs[2].von_karman_constant)
-mixing_length(x3, L3, lbcs, ubcs) = min(mixing_length(x3, lbcs), mixing_length(L3-x3, ubcs))
+mixing_length(x3, x3_lbc, x3_ubc, lbcs, ubcs) = min(mixing_length(x3-x3_lbc, lbcs), mixing_length(x3_ubc-x3, ubcs))
 
 struct StaticSmagorinskyBuffers{T}
     length_scale_h::Array{T,3}
     length_scale_v::Array{T,3}
-    StaticSmagorinskyBuffers(sgs_model::StaticSmagorinskyModel{T}, gd, ds, lbcs, ubcs) where T = begin
+    StaticSmagorinskyBuffers(sgs_model::StaticSmagorinskyModel{T}, gd, gm, lbcs, ubcs) where T = begin
         # TODO: check whether this is the correct way of defining the filter width
-        Δ = ds ./ (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
-        L = sgs_model.model_constant * cbrt(prod(Δ))
-        Lh = L * ones(gd.nz_h)
-        Lv = L * ones(gd.nz_v)
+        Δ1 = gm.hsize1 / (2*gd.nx_fd)
+        Δ2 = gm.hsize2 / (gd.ny_fd+1)
+        Δ3c = gm.Dvmap.(vrange(T, gd, NodeSet(:H))) / gd.nz_global
+        Δ3i = gm.Dvmap.(vrange(T, gd, NodeSet(:V))) / gd.nz_global
+        Lc = sgs_model.model_constant * cbrt.(Δ1 * Δ2 * Δ3c)
+        Li = sgs_model.model_constant * cbrt.(Δ1 * Δ2 * Δ3i)
 
         if sgs_model.wall_damping
-            Lh_wall = broadcast!(mixing_length, similar(Lh), x3range(gd, ds[3], NodeSet(:H)), ds[3], (lbcs,), (ubcs,))
-            Lv_wall = broadcast!(mixing_length, similar(Lv), x3range(gd, ds[3], NodeSet(:V)), ds[3], (lbcs,), (ubcs,))
+            Lc_wall = broadcast!(mixing_length, similar(Lc), x3(gd, gm, NodeSet(:H)), gm.vmap(zero(T)), gm.vmap(one(T)), (lbcs,), (ubcs,))
+            Li_wall = broadcast!(mixing_length, similar(Li), x3(gd, gm, NodeSet(:V)), gm.vmap(zero(T)), gm.vmap(one(T)), (lbcs,), (ubcs,))
             N = sgs_model.wall_damping_exponent
-            @. Lh = (Lh^(-N) + Lh_wall^(-N))^(-1/N)
-            @. Lv = (Lv^(-N) + Lv_wall^(-N))^(-1/N)
+            @. Lc = (Lc^(-N) + Lc_wall^(-N))^(-1/N)
+            @. Li = (Li^(-N) + Li_wall^(-N))^(-1/N)
         end
 
-        new{T}(reshape(Lh, (1,1,gd.nz_h)), reshape(Lv, (1,1,gd.nz_v)))
+        new{T}(reshape(Lc, (1,1,gd.nz_h)), reshape(Li, (1,1,gd.nz_v)))
     end
 end
 
@@ -85,23 +84,23 @@ struct FilteredAdvectionBuffers{T,P}
 
     adv::Tuple{Array{T,3},Array{T,3},Array{T,3}}
 
-    grid_spacing::Tuple{T,T,T}
+    grid_spacing::Tuple{T,T,Array{T,1}}
 
-    function FilteredAdvectionBuffers(T, gd::DistributedGrid, domain_size, lower_bcs, upper_bcs, sgs_model)
+    function FilteredAdvectionBuffers(gd::DistributedGrid, gm::GridMapping{T}, lower_bcs, upper_bcs, sgs_model) where T
 
         # velocity and gradients
-        vel = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
-        vel_dx1 = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
-        vel_dx2 = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
-        vel_dx3 = (zeros_pd(T, gd, :V), zeros_pd(T, gd, :V), zeros_pd(T, gd, :H))
+        vel = zeros_pd.(T, gd, staggered_nodes())
+        vel_dx1 = zeros_pd.(T, gd, staggered_nodes())
+        vel_dx2 = zeros_pd.(T, gd, staggered_nodes())
+        vel_dx3 = zeros_pd.(T, gd, inverted_nodes())
 
         # vorticity
-        vorticity = (zeros_pd(T, gd, :V), zeros_pd(T, gd, :V), zeros_pd(T, gd, :H))
+        vorticity = zeros_pd.(T, gd, inverted_nodes())
         vorticity_bcs = ((UnspecifiedBC(T, gd), UnspecifiedBC(T, gd)),
                          (UnspecifiedBC(T, gd), UnspecifiedBC(T, gd)))
 
         # strain rate
-        S13, S23, S12 = (zeros_pd(T, gd, :V), zeros_pd(T, gd, :V), zeros_pd(T, gd, :H))
+        S13, S23, S12 = zeros_pd.(T, gd, inverted_nodes())
         Sij = ((vel_dx1[1], S12, S13), (S12, vel_dx2[2], S23), (S13, S23, vel_dx3[3]))
         S_bcs = (UnspecifiedBC(T, gd), UnspecifiedBC(T, gd))
 
@@ -117,41 +116,29 @@ struct FilteredAdvectionBuffers{T,P}
         sgs_fd = ((τ11_fd, τ12_fd, τ13_fd), (τ12_fd, τ22_fd, τ23_fd), (τ13_fd, τ23_fd, nothing))
         sgs_bcs = (UnspecifiedBC(T, gd), UnspecifiedBC(T, gd), UnspecifiedBC(T, gd), UnspecifiedBC(T, gd), UnspecifiedBC(T, gd))
 
-        adv = (zeros_pd(T, gd, :H), zeros_pd(T, gd, :H), zeros_pd(T, gd, :V))
+        adv = zeros_pd.(T, gd, staggered_nodes())
 
-        grid_spacing = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+        grid_spacing = local_grid_spacing(gd, gm)
 
         new{T,proc_type()}(vel, vel_dx1, vel_dx2, vel_dx3, vorticity, vorticity_bcs, Sij, S_bcs,
-                StaticSmagorinskyBuffers(sgs_model, gd, domain_size, lower_bcs, upper_bcs),
+                StaticSmagorinskyBuffers(sgs_model, gd, gm, lower_bcs, upper_bcs),
                 eddy_viscosity_h, eddy_viscosity_v, sgs, sgs_fd, sgs_bcs, adv, grid_spacing)
     end
 end
 
 RoughWallEquilibriumModel(; z0 = 1e-3, kappa = 0.4) = RoughWallEquilibriumModel(z0, kappa)
 
-dx3!(dx3::AbstractArray{T,2}, vel¯::AbstractArray{T,2}, vel⁺::AbstractArray{T,2}, Δx3) where T =
-        @. dx3 = (vel⁺ - vel¯) * Δx3
-dx3!(dx3::AbstractArray{T,2}, bc::DirichletBC, vel⁺::AbstractArray{T,2}, Δx3) where T =
-        @. dx3 = (vel⁺ - bc.value) * Δx3
-dx3!(dx3::AbstractArray{T,2}, vel¯::AbstractArray{T,2}, bc::DirichletBC, Δx3) where T =
-        @. dx3 = (bc.value - vel¯) * Δx3
-
 function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransform,
         lower_bcs::NTuple{3,BoundaryCondition{P,T}}, upper_bcs::NTuple{3,BoundaryCondition{P,T}},
         b::FilteredAdvectionBuffers{T, P}) where {P, T}
 
     # Compute ui, dui/dx1, dui/dx2 and transform to PD (9 terms).
-    get_fields!(b.vel, ht, vel)
-    get_fields_dx1!(b.vel_dx1, ht, vel, df)
-    get_fields_dx2!(b.vel_dx2, ht, vel, df)
+    get_field!.(b.vel, ht, vel, staggered_nodes())
+    get_field_dx1!.(b.vel_dx1, vel, ht, df, staggered_nodes())
+    get_field_dx2!.(b.vel_dx2, vel, ht, df, staggered_nodes())
 
     # Compute vertical velocity gradients in physical domain
-    u1ext = layers_expand_half_h(b.vel[1], upper_bcs[1]) # H to H below & above V-nodes
-    u2ext = layers_expand_half_h(b.vel[2], upper_bcs[2]) # H to H below & above V-nodes
-    u3ext = layers_expand_half_v(b.vel[3], lower_bcs[3], upper_bcs[3]) # V to V below & above H-nodes
-    dx3!.(layers(b.vel_dx3[1]), u1ext[1:end-1], u1ext[2:end], df.dz1)
-    dx3!.(layers(b.vel_dx3[2]), u2ext[1:end-1], u2ext[2:end], df.dz1)
-    dx3!.(layers(b.vel_dx3[3]), u3ext[1:end-1], u3ext[2:end], df.dz1)
+    add_derivative_x3!.(reset!.(b.vel_dx3), b.vel, lower_bcs, upper_bcs, df, staggered_nodes())
 
     # Compute vorticity in physical domain
     b.vorticity[1] .= b.vel_dx2[3] .- b.vel_dx3[2]
@@ -159,14 +146,15 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     b.vorticity[3] .= b.vel_dx1[2] .- b.vel_dx2[1]
 
     # Compute advection term in physical domain.
-    ω1ext = layers_expand_half_v(b.vorticity[1], b.vorticity_bcs[1]...) # V to V below & above H-nodes
-    ω2ext = layers_expand_half_v(b.vorticity[2], b.vorticity_bcs[2]...) # V to V below & above H-nodes
-    advu!.(layers(b.adv[1]), layers(b.vel[2]), ω2ext[1:end-1], ω2ext[2:end],
-                                u3ext[1:end-1], u3ext[2:end], layers(b.vorticity[3]))
-    advv!.(layers(b.adv[2]), layers(b.vel[1]), ω1ext[1:end-1], ω1ext[2:end],
-                                u3ext[1:end-1], u3ext[2:end], layers(b.vorticity[3]))
-    advw!.(layers(b.adv[3]), u1ext[1:end-1], u1ext[2:end], layers(b.vorticity[1]),
-                                u2ext[1:end-1], u2ext[2:end], layers(b.vorticity[2]))
+    ω1exp = layers_expand_i_to_c(b.vorticity[1], b.vorticity_bcs[1]...) # I to I below & above C-nodes
+    ω2exp = layers_expand_i_to_c(b.vorticity[2], b.vorticity_bcs[2]...) # I to I below & above C-nodes
+    uexp = layers_expand_half.(b.vel, lower_bcs, upper_bcs, staggered_nodes())
+    advu!.(layers(b.adv[1]), layers(b.vel[2]), ω2exp[1:end-1], ω2exp[2:end],
+                             uexp[3][1:end-1], uexp[3][2:end], layers(b.vorticity[3]))
+    advv!.(layers(b.adv[2]), layers(b.vel[1]), ω1exp[1:end-1], ω1exp[2:end],
+                             uexp[3][1:end-1], uexp[3][2:end], layers(b.vorticity[3]))
+    advw!.(layers(b.adv[3]), uexp[1][1:end-1], uexp[1][2:end], layers(b.vorticity[1]),
+                             uexp[2][1:end-1], uexp[2][2:end], layers(b.vorticity[2]))
 
     # Compute Sij on its natural nodes in PD (Skk are already set to gradients)
     broadcast!((a,b) -> (a+b)/2, b.strain_rate[2][3], b.vel_dx2[3], b.vel_dx3[2])
@@ -176,7 +164,7 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     # Compute eddy viscosity on both sets of nodes
     νT(SijSij, L) = L^2 * sqrt(2*SijSij)
     SijSij!((b.eddy_viscosity_h, b.eddy_viscosity_v), b.strain_rate,
-            b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.dz1)
+            b.vel, lower_bcs, upper_bcs, b.strain_bcs, df.DD3_h)
     broadcast!(νT, b.eddy_viscosity_h, b.eddy_viscosity_h, b.sgs_model.length_scale_h)
     broadcast!(νT, b.eddy_viscosity_v, b.eddy_viscosity_v, b.sgs_model.length_scale_v)
 
@@ -185,22 +173,28 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     @. b.sgs[2][2] = 2 * b.eddy_viscosity_h * b.strain_rate[2][2]
     @. b.sgs[3][3] = 2 * b.eddy_viscosity_h * b.strain_rate[3][3]
     @. b.sgs[1][2] = 2 * b.eddy_viscosity_h * b.strain_rate[1][2]
-    @. b.sgs[1][3] = 2 * b.eddy_viscosity_v * b.strain_rate[3][1]
+    @. b.sgs[3][1] = 2 * b.eddy_viscosity_v * b.strain_rate[3][1]
     @. b.sgs[2][3] = 2 * b.eddy_viscosity_v * b.strain_rate[2][3]
 
     # Add values of dτi3/dx3 to the resolved part of the non-linear term.
-    τ13 = layers_expand_half_v(b.sgs[1][3], b.sgs_bcs[1], b.sgs_bcs[2])
-    τ13 = apply_wall_model(τ13, lower_bcs[1], b.vel[1], upper_bcs[1], b.vel, (lower_bcs[3], upper_bcs[3]))
-    broadcast(add_dx3!, layers(b.adv[1]), τ13[1:end-1], τ13[2:end], df.dz1) # relies on wall model
-    τ23 = layers_expand_half_v(b.sgs[2][3], b.sgs_bcs[3], b.sgs_bcs[4])
-    τ23 = apply_wall_model(τ23, lower_bcs[2], b.vel[2], upper_bcs[2], b.vel, (lower_bcs[3], upper_bcs[3]))
-    broadcast(add_dx3!, layers(b.adv[2]), τ23[1:end-1], τ23[2:end], df.dz1) # relies on wall model
-    τ33 = layers_expand_half_h(b.sgs[3][3], b.sgs_bcs[5])
-    broadcast(add_dx3!, layers(b.adv[3]), τ33[1:end-1], τ33[2:end], df.dz1)
+    τ13 = layers_expand_i_to_c(b.sgs[1][3], b.sgs_bcs[1], b.sgs_bcs[2])
+    τ13 = apply_wall_model(τ13, lower_bcs[1], b.vel[1], upper_bcs[1], b.vel)
+    for i=1:equivalently(size(b.adv[1], 3), length(τ13)-1)
+        add_derivative!(view(b.adv[1], :, :, i), τ13[i:i+1], df.D3_h[i]) # τ13 can be from wall model
+    end
+    τ23 = layers_expand_i_to_c(b.sgs[2][3], b.sgs_bcs[3], b.sgs_bcs[4])
+    τ23 = apply_wall_model(τ23, lower_bcs[2], b.vel[2], upper_bcs[2], b.vel)
+    for i=1:equivalently(size(b.adv[2], 3), length(τ23)-1)
+        add_derivative!(view(b.adv[2], :, :, i), τ23[i:i+1], df.D3_h[i]) # τ23 can be from wall model
+    end
+    τ33 = layers_expand_c_to_i(b.sgs[3][3], b.sgs_bcs[5])
+    for i=1:equivalently(size(b.adv[3], 3), length(τ33)-1)
+        add_derivative!(view(b.adv[3], :, :, i), τ33[i:i+1], df.D3_v[i])
+    end
 
     # Transform these terms back to FD (8 terms)
     # NOTE: τ33 is not needed in FD, and τ21 == τ12
-    set_fields!(adv, ht, b.adv)
+    set_field!.(adv, ht, b.adv, staggered_nodes())
     set_field!(b.sgs_fd[1][1], ht, b.sgs[1][1], NodeSet(:H))
     set_field!(b.sgs_fd[1][2], ht, b.sgs[1][2], NodeSet(:H))
     set_field!(b.sgs_fd[2][2], ht, b.sgs[2][2], NodeSet(:H))
@@ -208,39 +202,49 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     set_field!(b.sgs_fd[2][3], ht, b.sgs[2][3], NodeSet(:V))
 
     # Add horizontal contributions of stress divergence to RHS
-    @. adv[1] += b.sgs_fd[1][1] * df.dx1 + b.sgs_fd[1][2] * df.dy1
-    @. adv[2] += b.sgs_fd[2][1] * df.dx1 + b.sgs_fd[2][2] * df.dy1
-    @. adv[3] += b.sgs_fd[3][1] * df.dx1 + b.sgs_fd[3][2] * df.dy1
+    @. adv[1] += b.sgs_fd[1][1] * df.D1 + b.sgs_fd[1][2] * df.D2
+    @. adv[2] += b.sgs_fd[2][1] * df.D1 + b.sgs_fd[2][2] * df.D2
+    @. adv[3] += b.sgs_fd[3][1] * df.D1 + b.sgs_fd[3][2] * df.D2
 
     # TODO: check computation of time step restriction
-    dt_adv = advective_timescale(b.vel, b.grid_spacing)
+    dt_adv = advective_timescale(layers.(b.vel), b.grid_spacing)
 
     return adv, dt_adv
 end
 
-# TODO: add support for one layer per process
-function fix_bcs(Si3::Tuple, lbc, vel, ubc, D3)
-    first = Si3[1] isa UnspecifiedBC ? dx3_boundary!(Si3[1], lbc, view(vel,:,:,1), view(vel,:,:,2), D3) : Si3[1]
-    last = Si3[end] isa UnspecifiedBC ? dx3_boundary!(Si3[end], ubc, view(vel,:,:,size(vel,3)), view(vel,:,:,size(vel,3)-1), -D3) : Si3[end]
+function fix_bcs(Si3::Tuple, lbc, vel, ubc)
+    first = Si3[1] isa UnspecifiedBC ? Si3_boundary(Si3[1], Si3[2], lbc, view(vel,:,:,1)) : Si3[1]
+    last = Si3[end] isa UnspecifiedBC ? Si3_boundary(Si3[end], Si3[end-1], ubc, view(vel,:,:,size(vel,3)), -1) : Si3[end]
     first, Si3[2:end-1]..., last
 end
 
-# one-sided differences for the second-order derivatives du1/dx3 & du2/dx3 at the wall
-# (du/dx)(x=0) = (− u(1.5Δ) + 9 u(0.5Δ) − 8 u(0)) / (3 Δ) + O(Δ²)
-function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::RoughWallEquilibriumBC, vel_h1, vel_h2, D3) # D3 is 1/Δx3
-    # TODO: this should be based on the log law, strictly speaking…
-    @. dx3.buffer_pd = D3 * (- vel_h2 + 9 * vel_h1 - 8 * vel_bc.value) / 3
-    dx3.buffer_pd
+function Si3_boundary(Si3_bc::UnspecifiedBC, Si3_I1, vel_bc::DirichletBC, vel_C1, sign)
+    # one-sided differences for the second-order derivatives du1/dx3 & du2/dx3 at the wall
+    # (du/dx)(x=0) = (− u(1.5Δ) + 9 u(0.5Δ) − 8 u(0)) / (3 Δ) + O(Δ²)
+    # TODO (a bit complicated because we might need to send the second layer from the second process)
+    error("Not implemented")
 end
 
-function dx3_boundary!(dx3::UnspecifiedBC, vel_bc::NeumannBC, vel_h1, vel_h2, D3)
+function Si3_boundary(Si3_bc::UnspecifiedBC, Si3_i1, vel_bc::RoughWallEquilibriumBC, vel_c1, sign = 1) # D3 is α/Δx3
+    # based on the log law, the derivative at the first node is u / (z log(z/z₀))
+    # we can set the value here such that (Si3_boundary + Si3[1])/2 == Si3[1/2]
+    # i.e. we have to set it to 2*Si3[1/2] - Si3[1]
+    # where Si3[1/2] == 1/2 * u / (z log(z/z₀))
+    # so Si3 = u / (z log(z/z₀)) - Si3[1]
+    z, z₀ = vel_bc.wall_distance, vel_bc.roughness_length
+    @. Si3_bc.buffer_pd = sign * vel_c1 / (z * log(z/z₀)) - Si3_i1
+    Si3_bc.buffer_pd
+end
+
+function Si3_boundary(_::UnspecifiedBC, _, vel_bc::NeumannBC, _, _)
     # we can return a scalar instead of a whole layer and the broadcasts will still work
-    vel_bc.value
+    # note: the sign is ignored because the gradient of the BC always has the right direction
+    vel_bc.gradient / 2
 end
 
 add_interpolated_sq!(out, below, above, count = 1) = @. out += count * (below + above)^2 / 4
 
-function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, D3)
+function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, DD3_h)
 
     # in the following, we assume that du3/dx1 and du3/dx2 vanish at the walls
     @assert lbcs[3] isa DirichletBC && ubcs[3] isa DirichletBC "Horizontal gradients of vertical velocity do not vanish at the walls."
@@ -252,13 +256,13 @@ function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, D3)
     # add contributions of (Sij Sij) that have to be interpolated from H-nodes to V-nodes
     # NOTE: it is always more accurate to interpolate first and square after
     lv = layers(SijSij_v)
-    S11 = layers_expand_half_h(S[1][1], temp_bcs[1])
+    S11 = layers_expand_c_to_i(S[1][1], temp_bcs[1])
     @. add_interpolated_sq!.(lv, S11[1:end-1], S11[2:end])
-    S22 = layers_expand_half_h(S[2][2], temp_bcs[1])
+    S22 = layers_expand_c_to_i(S[2][2], temp_bcs[1])
     @. add_interpolated_sq!.(lv, S22[1:end-1], S22[2:end])
-    S33 = layers_expand_half_h(S[3][3], temp_bcs[1])
+    S33 = layers_expand_c_to_i(S[3][3], temp_bcs[1])
     @. add_interpolated_sq!.(lv, S33[1:end-1], S33[2:end])
-    S12 = layers_expand_half_h(S[1][2], temp_bcs[1])
+    S12 = layers_expand_c_to_i(S[1][2], temp_bcs[1])
     @. add_interpolated_sq!.(lv, S12[1:end-1], S12[2:end], 2)
 
     # add contributions of (Sij Sij) that have to be interpolated from V-nodes to H-nodes
@@ -266,189 +270,38 @@ function SijSij!((SijSij_h, SijSij_v), S, vel, lbcs, ubcs, temp_bcs, D3)
     #          so be very careful when changing the order of these commands!
     lh = layers(SijSij_h)
     begin # top/bottom layers of S13 might be buffers of temp_bcs in this section
-        S13 = layers_expand_half_v(S[1][3], temp_bcs[1:2]...)
-        S13 = fix_bcs(S13, lbcs[1], vel[1], ubcs[1], D3)
+        S13 = layers_expand_i_to_c(S[1][3], temp_bcs[1:2]...)
+        S13 = fix_bcs(S13, lbcs[1], vel[1], ubcs[1])
         @. add_interpolated_sq!.(lh, S13[1:end-1], S13[2:end], 2)
     end
     begin # top/bottom layers of S23 might be buffers of temp_bcs in this section
-        S23 = layers_expand_half_v(S[2][3], temp_bcs[1:2]...)
-        S23 = fix_bcs(S23, lbcs[2], vel[2], ubcs[2], D3)
+        S23 = layers_expand_i_to_c(S[2][3], temp_bcs[1:2]...)
+        S23 = fix_bcs(S23, lbcs[2], vel[2], ubcs[2])
         @. add_interpolated_sq!.(lh, S23[1:end-1], S23[2:end], 2)
     end
 
     SijSij_h, SijSij_v
 end
 
-function wall_model(τi3, vel_bc::RoughWallEquilibriumBC, vel_h1, u1, u2, u3_below, u3_above, prefactor = 1)
+function wall_model(τi3, vel_bc::RoughWallEquilibriumBC, vel_h1, u1, u2, prefactor = 1)
     @. τi3.buffer_pd = vel_bc.von_karman_constant^2 / log(vel_bc.wall_distance/vel_bc.roughness_length)^2 *
-            prefactor * vel_h1 * sqrt(u1^2 + u2^2 + (u3_below/2+u3_above/2)^2)
+            prefactor * vel_h1 * sqrt(u1^2 + u2^2)
     τi3.buffer_pd
 end
 
 function wall_model(τi3, vel_bc::NeumannBC, args...)
-    @assert vel_bc.value == 0 "Wall model for non-zero Neumann BC not implemented" vel_bc.value
-    vel_bc.value
+    @assert vel_bc.gradient == 0 "Wall model for non-zero Neumann BC not implemented" vel_bc.value
+    vel_bc.gradient
 end
 
-function apply_wall_model(τi3::Tuple, lbc, vel, ubc, vels, (u3_lbc, u3_ubc))
+function apply_wall_model(τi3::Tuple, lbc, vel, ubc, vels)
     first = τi3[1] isa UnspecifiedBC ? wall_model(τi3[1], lbc, first_layer(vel),
-            first_layer(vels[1]), first_layer(vels[2]), u3_lbc.value, first_layer(vels[3])) : τi3[1]
+            first_layer(vels[1]), first_layer(vels[2])) : τi3[1]
     # TODO: handle case where u3 has no local layer (i.e. last_layer(vels[3]) fails)
     last = τi3[end] isa UnspecifiedBC ? wall_model(τi3[end], ubc, last_layer(vel),
-            last_layer(vels[1]), last_layer(vels[2]), u3_ubc.value, last_layer(vels[3]), -1) : τi3[end]
+            last_layer(vels[1]), last_layer(vels[2]), -1) : τi3[end]
     first, τi3[2:end-1]..., last
 end
 
-add_dx3!(f_out, f_below, f_above, D3) = @. f_out += (f_above - f_below) * D3
-add_dx3!(f_out, bc::UnspecifiedBC, _, D3) = @error "Cannot compute derivative without BC"
-add_dx3!(f_out, _, bc::UnspecifiedBC, D3) = @error "Cannot compute derivative without BC"
 
 
-# HELPER FUNCTIONS (TODO: merge with other functions in other files)
-
-equivalently(args...) = all(arg === args[1] for arg=args[2:end]) ?
-                        args[1] : error("Arguments are not equivalent")
-
-zeros_fd(T, gd, ns::Symbol) = zeros_fd(T, gd, NodeSet(ns))
-zeros_pd(T, gd, ns::Symbol) = zeros_pd(T, gd, NodeSet(ns))
-
-first_layer(A) = view(A, :, :, 1)
-last_layer(A) = view(A, :, :, size(A, 3))
-
-@inline buffer_for_field(::AbstractArray{T}, bc) where {T<:SupportedReals} = bc.buffer_pd
-@inline buffer_for_field(::AbstractArray{Complex{T}}, bc) where {T<:SupportedReals} = bc.buffer_fd
-
-"""
-Transform a field from the frequency domain to an extended set of nodes in the
-physical domain by adding extra frequencies set to zero.
-The function optionally takes an array of prefactors which will be multiplied
-with the values before the inverse transform. These prefactors don’t have to be
-specified along all dimensions since singleton dimensions are broadcast.
-"""
-function get_field!(field_pd, ht::HorizontalTransform, field_fd, prefactors, ns::NodeSet)
-
-    # highest frequencies in non-expanded array
-    # this assumes that there are no Nyquist frequencies in field_fd
-    # while this could be checked in y-direction, the x-direction is ambiguous
-    # so we just assume that there is no Nyquist frequency since that’s how the
-    # whole code is set up
-    kx_max = size(field_fd, 1) - 1 # [0, 1…K]
-    ky_max = div(size(field_fd, 2), 2) # [0, 1…K, -K…1]
-
-    # copy frequencies and set the extra frequencies to zero
-    buffer = get_buffer_fd(ht, ns)
-    @views buffer[1:kx_max+1, 1:ky_max+1, :] .=
-        field_fd[:, 1:ky_max+1, :] .*
-        prefactors[:, 1:(size(prefactors, 2) == 1 ? 1 : ky_max+1), :]
-    @views buffer[1:kx_max+1, end-ky_max+1:end, :] .=
-        field_fd[:, ky_max+2:end, :] .*
-        prefactors[:, (size(prefactors, 2) == 1 ? 1 : ky_max+2):end, :]
-    buffer[1:kx_max+1, ky_max+2:end-ky_max, :] .= 0
-    buffer[kx_max+2:end, :, :] .= 0
-
-    # perform ifft (note that this overwrites buffer_big_fd due to the way fftw
-    # works, and also note that the factor 1/(nx*ny) is always multiplied during
-    # the forward transform and not here)
-    LinearAlgebra.mul!(field_pd, get_plan_bwd(ht, ns), buffer)
-    field_pd
-end
-
-# default when prefactors are missing
-get_field!(field_pd, ht::HorizontalTransform, field_fd, ns::NodeSet) =
-    get_field!(field_pd, ht, field_fd, ones(eltype(field_pd), (1, 1, 1)), ns::NodeSet)
-
-# convenience functions that transform all three components
-map_to_components(f, args...; nodes = (NodeSet(:H), NodeSet(:H), NodeSet(:V))) =
-    f.(args..., nodes)
-set_fields!(fields_fd, ht, fields_pd) =
-    map_to_components(set_field!, fields_fd, (ht,), fields_pd)
-get_fields!(fields_pd, ht, fields_fd) =
-    map_to_components(get_field!, fields_pd, (ht,), fields_fd)
-get_fields_dx1!(fields_dx1_pd, ht, fields_fd, df) =
-    map_to_components(get_field!, fields_dx1_pd, (ht,), fields_fd, (df.dx1,))
-get_fields_dx2!(fields_dx2_pd, ht, fields_fd, df) =
-    map_to_components(get_field!, fields_dx2_pd, (ht,), fields_fd, (df.dy1,))
-
-"""
-This function takes a field defined on H-nodes, converts it into layers, and expands
-them through communication such that the list includes the layers just above and
-below all V-nodes. This means passing data down throughout the domain.
-The boundary condition is only used for passing data, the actual values are unused.
-"""
-function layers_expand_half_h(field::AbstractArray{T}, bc_above::BoundaryCondition{P}) where {T,P}
-    #TODO: find a better name for this function
-
-    l = layers(field)
-
-    if P == SingleProc
-        l
-
-    elseif P == MinProc
-        buffer_above = buffer_for_field(field, bc_above)
-        rq = (MPI.Irecv!(buffer_above, bc_above.neighbor_above, 1, MPI.COMM_WORLD), )
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        l..., buffer_above
-
-    elseif P == InnerProc
-        buffer_above = buffer_for_field(field, bc_above)
-        rq = (MPI.Isend(l[1], bc_above.neighbor_below, 1, MPI.COMM_WORLD),
-              MPI.Irecv!(buffer_above, bc_above.neighbor_above, 1, MPI.COMM_WORLD))
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        l..., buffer_above
-
-    # there is a special case for when the top process does not have any V-nodes,
-    # which is the case if there is only one layer per process. in this case, we
-    # only have to pass data down, but we still return the (single) H-layer for
-    # consistency so we always return Nv+1 layers
-    elseif P == MaxProc
-        rq = (MPI.Isend(l[1], bc_above.neighbor_below, 1, MPI.COMM_WORLD), )
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        l
-
-    else
-        @error "Invalid process type" P
-    end
-end
-
-"""
-This function takes a field defined on V-nodes, converts it into layers, and expands
-them through communication such that the list includes the layers just above and
-below all H-nodes. This means passing data up throughout the domain.
-"""
-function layers_expand_half_v(field::AbstractArray{T}, bc_below::BoundaryCondition{P},
-                        bc_above::BoundaryCondition{P}) where {T,P}
-    #TODO: find a better name for this function
-
-    l = layers(field)
-    neighbor_below = equivalently(bc_below.neighbor_below, bc_above.neighbor_below)
-    neighbor_above = equivalently(bc_below.neighbor_above, bc_above.neighbor_above)
-
-    if P == SingleProc
-        bc_below, l..., bc_above
-
-    elseif P == MinProc
-        rq = (MPI.Isend(l[end], neighbor_above, 1, MPI.COMM_WORLD), )
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        bc_below, l...
-
-    elseif P == InnerProc
-        buffer_below = buffer_for_field(field, bc_below)
-        rq = (MPI.Isend(l[end], neighbor_above, 1, MPI.COMM_WORLD),
-              MPI.Irecv!(buffer_below, neighbor_below, 1, MPI.COMM_WORLD))
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        buffer_below, l...
-
-    # there is a special case for when the top process does not have any V-nodes,
-    # which is the case if there is only one layer per process. in this case, we
-    # only have to pass data down, but we still return the (single) H-layer for
-    # consistency so we always return Nv+1 layers
-    elseif P == MaxProc
-        buffer_below = buffer_for_field(field, bc_below)
-        rq = (MPI.Irecv!(buffer_below, neighbor_below, 1, MPI.COMM_WORLD), )
-        map(MPI.Wait!, rq) # not using Waitall! to avoid allocation of vector
-        buffer_below, l..., bc_above
-
-    else
-        @error "Invalid process type" P
-    end
-end

@@ -42,7 +42,7 @@ function test_pressure_solver(N)
     gd = CF.DistributedGrid(4, 4, N) # size in FD: (2, 3, N)
     batch_size = 4 # not evenly divisible by 2x3
     domain_size = (2*(π*one(T)), 2*(π*one(T)), one(T))
-    gs = domain_size ./ (gd.nx_pd, gd.ny_pd, gd.nz_global)
+    gm = CF.GridMapping(domain_size...)
 
     u = CF.zeros_fd(T, gd, CF.NodeSet(:H))
     v = CF.zeros_fd(T, gd, CF.NodeSet(:H))
@@ -59,39 +59,42 @@ function test_pressure_solver(N)
 
     lbc = CF.bc_noslip(T, gd)
     ubc = CF.bc_freeslip(T, gd)
-    pbc = CF.DirichletBC(zero(T), gd)
+    pbc = CF.UnspecifiedBC(T, gd)
 
-    df = CF.DerivativeFactors(gd, domain_size)
+    df = CF.DerivativeFactors(gd, gm)
     ht = CF.HorizontalTransform(T, gd)
-    ps = CF.prepare_pressure_solver(gd, df, batch_size)
+    ps = CF.prepare_pressure_solver(gd, gm, batch_size)
 
     # check pressure in u-direction
-    CF.set_field!(u, ht, (x,y,z) -> 1.0 + sin(x), gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(v, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(w, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:V))
-    CF.solve_pressure!(p, (u,v,w), lbc, ubc, pbc, df, ps)
-    CF.subtract_pressure_gradient!((u,v,w), p, df, pbc)
+    CF.set_field!(u, (x,y,z) -> 1.0 + sin(x), gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(v, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(w, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:V))
+    CF.solve_pressure!(p, (u,v,w), lbc, ubc, gd, df, ps)
+    CF.add_gradient!((u,v,w), p, pbc, df, -1)
     CF.get_field!(u_pd, ht, u, CF.NodeSet(:H))
+    @test u_pd[1,1,:] ≈ ones(T, size(u_pd, 3))
     @test u_pd ≈ ones(T, size(u_pd))
 
     # check pressure in v-direction
-    CF.set_field!(u, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(v, ht, (x,y,z) -> 1.0 + sin(y), gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(w, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:V))
-    CF.solve_pressure!(p, (u,v,w), lbc, ubc, pbc, df, ps)
-    CF.subtract_pressure_gradient!((u,v,w), p, df, pbc)
+    CF.set_field!(u, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(v, (x,y,z) -> 1.0 + sin(y), gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(w, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:V))
+    CF.solve_pressure!(p, (u,v,w), lbc, ubc, gd, df, ps)
+    CF.add_gradient!((u,v,w), p, pbc, df, -1)
     CF.get_field!(v_pd, ht, v, CF.NodeSet(:H))
+    @test v_pd[1,1,:] ≈ ones(T, size(v_pd, 3))
     @test v_pd ≈ ones(T, size(v_pd))
 
     # check pressure in w-direction
-    CF.set_field!(u, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(v, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:H))
-    CF.set_field!(w, ht, (x,y,z) -> 0.0, gs, gd.iz_min, CF.NodeSet(:V))
+    CF.set_field!(u, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(v, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:H))
+    CF.set_field!(w, (x,y,z) -> 0.0, gd, gm, ht, CF.NodeSet(:V))
     w_bc = convert(T, 0.5700899056030746) # random but same value everywhere
     CF.solve_pressure!(p, (u,v,w), (lbc[1], lbc[2], CF.DirichletBC(w_bc, gd)),
-            (ubc[1], ubc[2], CF.DirichletBC(w_bc, gd)), pbc, df, ps)
-    CF.subtract_pressure_gradient!((u,v,w), p, df, pbc)
+            (ubc[1], ubc[2], CF.DirichletBC(w_bc, gd)), gd, df, ps)
+    CF.add_gradient!((u,v,w), p, pbc, df, -1)
     CF.get_field!(w_pd, ht, w, CF.NodeSet(:V))
+    @test w_pd[1,1,:] ≈ w_bc * ones(T, size(w_pd, 3))
     @test w_pd ≈ w_bc * ones(T, size(w_pd))
 end
 

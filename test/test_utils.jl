@@ -1,3 +1,13 @@
+function setup_random_fields(T, nx, ny, nz)
+    gd = CF.DistributedGrid(nx, ny, nz)
+    uh = CF.zeros_fd(T, gd, CF.NodeSet(:H))
+    uv = CF.zeros_fd(T, gd, CF.NodeSet(:V))
+    fill!(uh, rand(Complex{T}))
+    fill!(uv, rand(Complex{T}))
+    ht = CF.HorizontalTransform(T, gd)
+    gd, ht, uh, uv
+end
+
 function test_convergence(N, ε; exponential=false, order=nothing,
         threshold_linearity=0.99, threshold_slope=0.95)
 

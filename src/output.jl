@@ -1,13 +1,6 @@
-max_dt_diffusion(coeff, dx, dy, dz) = min(dx, dy, dz)^2 / coeff
-
-function max_dt_advection(vel, grid_spacing)
-    max_vel = map(global_maximum, vel)
-    maximum(grid_spacing ./ max_vel)
-end
-
 struct OutputCache{T,NP}
 
-    domain_size::NTuple{3,T}
+    mapping::GridMapping{T}
     integration_time::T
 
     transform::HorizontalTransform{T}
@@ -30,7 +23,7 @@ struct OutputCache{T,NP}
     wallstress_factors::NTuple{4,Tuple{T,Tuple{Int,Int},NTuple{3,T}}}
     courant::Array{T,1}
 
-    function OutputCache(gd::DistributedGrid, ds::NTuple{3,T}, dt::T, nt::Int,
+    function OutputCache(gd::DistributedGrid, gm::GridMapping{T}, dt::T, nt::Int,
                          lower_bcs::NTuple{3,BoundaryCondition},
                          upper_bcs::NTuple{3,BoundaryCondition},
                          diffusion_coeff::T,
@@ -41,10 +34,10 @@ struct OutputCache{T,NP}
         hlfactors = Tuple(2^(-1/hl) for hl=halflives)
         vel, mke, tke = (Tuple(zeros(T, nz, length(halflives) + 1)
                                for nz in (gd.nz_h, gd.nz_h, gd.nz_v)) for i=1:3)
-        wsf = wallstress_factors(gd, ds, lower_bcs, upper_bcs, diffusion_coeff)
+        wsf = wallstress_factors(gd, gm, lower_bcs, upper_bcs, diffusion_coeff)
         courant = zeros(T, 3*length(halflives) + 4)
 
-        new{T,length(halflives)}(ds, dt*nt, HorizontalTransform(T, gd, expand=false),
+        new{T,length(halflives)}(gm, dt*nt, HorizontalTransform(T, gd, expand=false),
                 shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd),
                 snapshot_dir, Ref(0), timestamps, relevant_digits(timestamps),
                 output_io, Ref(0), output_frequency,
@@ -83,7 +76,7 @@ function update_profiles!(output::OutputCache, state)
     end
 end
 
-function wallstress_factors(gd::DistributedGrid, ds::NTuple{3,T},
+function wallstress_factors(gd::DistributedGrid, gm::GridMapping{T},
         lower_bcs, upper_bcs, diffusion_coeff::T) where {T}
 
     # indices of first, second, second-to-last, and last layer
@@ -94,16 +87,16 @@ function wallstress_factors(gd::DistributedGrid, ds::NTuple{3,T},
     upper_indices = (iz_max == nzg ? nzl : 0,
         iz_max == nzg && iz_min < nzg ? nzl - 1 : iz_max == nzg - 1 ? nzl : 0)
 
-    # ν u'(0) = ν (-8 u(0) + 9 u(Δz/2) - u(3Δz/2)) / (3Δz)
-    factors(bc) = bc isa NeumannBC ? (1, 0, 0) .* diffusion_coeff :
-        (-8, 9, -1) ./ (3 * ds[3] / gd.nz_global) .* diffusion_coeff
+    # ν u'(0) = ν α (-8 u(0) + 9 u(Δζ/2) - u(3Δζ/2)) / (3Δζ)
+    factors(bc, ζ) = bc isa NeumannBC ? (1, 0, 0) .* diffusion_coeff :
+        (gd.nz_global / gm.Dvmap(ζ)) .* (-8/3, 9/3, -1/3) .* diffusion_coeff
+    value(bc) = bc isa NeumannBC ? bc.gradient : bc.value
 
     # precomputed values: bc, (index1, index2), (factor0, factor1, factor2)
-    (   (lower_bcs[1].value, lower_indices, factors(lower_bcs[1])),
-        (lower_bcs[2].value, lower_indices, factors(lower_bcs[2])),
-        (upper_bcs[1].value, upper_indices, factors(upper_bcs[1])),
-        (upper_bcs[2].value, upper_indices, factors(upper_bcs[2])),
-        )
+    ((value(lower_bcs[1]), lower_indices, factors(lower_bcs[1], zero(T))),
+     (value(lower_bcs[2]), lower_indices, factors(lower_bcs[2], zero(T))),
+     (value(upper_bcs[1]), upper_indices, factors(upper_bcs[1], one(T))),
+     (value(upper_bcs[2]), upper_indices, factors(upper_bcs[2], one(T))),)
 end
 
 function wallstress(profiles::Array{T,2}, bc, indices, factors) where {T}
@@ -158,6 +151,7 @@ function print_once(io::IO, args...)
 end
 
 function print_diagnostics(io::IO, output::OutputCache, t)
+    print_once(io, "")
     print_once(io, "Simulation status after ", output.diagnostics_counter[], " steps:")
     print_once(io, " • Bulk Velocity:               ", summary_profile(output.profiles_vel[1]))
     print_once(io, " • Mean Kinetic Energy:         ", summary_profile(output.profiles_mke[1]))
