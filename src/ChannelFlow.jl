@@ -22,6 +22,7 @@ include("mean_spectra.jl")
 include("mean_statistics.jl")
 include("snapshots.jl")
 include("static_smagorinsky.jl")
+include("time_integration.jl")
 include("integration.jl")
 
 # HIGH-LEVEL INTERFACE

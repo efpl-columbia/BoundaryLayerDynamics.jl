@@ -158,7 +158,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
         output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
         profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
-        verbose=true) where {P,T}
+        method = SSPRK33(), verbose=true) where {P,T}
 
     to = TimerOutputs.get_defaulttimer()
     oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
@@ -168,7 +168,15 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)
 
-    function pressure_solver!(u)
+    rate! = (du, u, t) -> begin
+        TimerOutputs.@timeit to "advection" _, dt_adv = set_advection!(du.x, u.x,
+            cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
+        TimerOutputs.@timeit to "diffusion" _, dt_dif = add_diffusion!(du.x, u.x,
+            cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
+        cf.constant_flux || add_forcing!(du.x, cf.forcing)
+    end
+
+    projection! = (u) -> begin
         TimerOutputs.@timeit to "pressure" begin
             enforce_continuity!(u.x, cf.lower_bcs, cf.upper_bcs,
                                 cf.grid, cf.derivatives, cf.pressure_solver)
@@ -176,40 +184,25 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         end
     end
 
+    log = (state, tstep, t) -> begin
+        TimerOutputs.@timeit to "output" begin
+            TimerOutputs.@timeit to "flow statistics" log_statistics!(stats, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
+            TimerOutputs.@timeit to "snapshots" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
+        end
+    end
+
     # initialize integrator and perform one step to compile functions
     TimerOutputs.@timeit to "initialization" begin
-
         u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
-        pressure_solver!(u0)
-
-        # set up time integration as ODE problem, excluding pressure solution
-        prob = OrdinaryDiffEq.ODEProblem(u0, (0.0, dt*nt)) do du, u, p, t
-            TimerOutputs.@timeit to "advection" _, dt_adv = set_advection!(du.x, u.x,
-                cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
-            TimerOutputs.@timeit to "diffusion" _, dt_dif = add_diffusion!(du.x, u.x,
-                cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
-            cf.constant_flux || add_forcing!(du.x, cf.forcing)
-        end
-
-        # apply pressure solver as stage limiter for SSP stepping
-        alg = OrdinaryDiffEq.SSPRK33((u, f, t) -> pressure_solver!(u))
-
-        integrator = OrdinaryDiffEq.init(prob, alg, dt = dt, save_start = false, save_everystep = false)
-        TimerOutputs.@timeit to "output" log_state!(oc, integrator.u.x, integrator.t, (dt, dt_adv, dt_dif), verbose)
+        prob = TimeIntegrationProblem(rate!, projection!, u0, (0.0, dt*nt))
+        log(prob.u, 0, 0.0)
     end
 
     # perform the full integration
-    tstep = 0
-    TimerOutputs.@timeit to "time stepping" for (state, t) in OrdinaryDiffEq.tuples(integrator)
-        # this part is run after every step (not before/during)
-        tstep += 1
-        TimerOutputs.@timeit to "output flow statistics" log_statistics!(stats, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
-        TimerOutputs.@timeit to "output snapshots" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
-    end
-
+    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, dt, log)
     for i=1:3
-        cf.velocity[i] .= integrator.sol[end].x[i]
+        cf.velocity[i] .= sol.x[i]
     end
     verbose && show_all(oc.diagnostics_io, to)
-    integrator.sol
+    sol
 end
