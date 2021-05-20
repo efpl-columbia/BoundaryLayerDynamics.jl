@@ -332,6 +332,3 @@ function apply_wall_model(τi3::Tuple, lbc, vel, ubc, vels)
             last_layer(vels[1]), last_layer(vels[2]), -1) : τi3[end]
     first, τi3[2:end-1]..., last
 end
-
-
-

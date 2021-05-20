@@ -99,6 +99,8 @@ function prepare_channel(Re, grid_size;
                          grid_mapping = nothing,
                          roughness_length = nothing)
 
+    # TODO: better errors for unsupported combinations (LES + smooth wall)
+
     x3max = (half_channel ? 1.0 : 2.0)
     domain = (Float64.(domain_size)..., isnothing(grid_mapping) ? x3max :
               instantiate(grid_mapping, x3max, half_channel))
