@@ -38,7 +38,7 @@ struct OutputCache{T,NP}
         courant = zeros(T, 3*length(halflives) + 4)
 
         new{T,length(halflives)}(gm, dt*nt, HorizontalTransform(T, gd, expand=false),
-                shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd),
+                shift_factors(T, 2*gd.nx_fd, gd.ny_fd+1),
                 snapshot_dir, Ref(0), timestamps, relevant_digits(timestamps),
                 output_io, Ref(0), output_frequency,
                 halflives, hlfactors, vel, mke, tke, wsf, courant,

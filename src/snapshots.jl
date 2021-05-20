@@ -98,17 +98,25 @@ function write_field(filename, field::Array{Complex{T}}, gm::GridMapping{T},
     buffer_fd = get_buffer_fd(ht, ns)
     buffer_pd = get_buffer_pd(ht, ns)
 
+    # TODO: the code below duplicates some functionality of the get_field
+    # function, so it should probably be merged with that one eventually
+
+    # copy frequencies and set the extra frequencies to zero
+    k1_max = size(field, 1) - 1 # [0, 1…K]
+    k2_max = div(size(field, 2), 2) # [0, 1…K, -K…1]
+    @views buffer_fd[1:k1_max+1, 1:k2_max+1, :] .= field[:, 1:k2_max+1, :]
+    @views buffer_fd[1:k1_max+1, end-k2_max+1:end, :] .= field[:, k2_max+2:end, :]
+    buffer_fd[1:k1_max+1, k2_max+2:end-k2_max, :] .= 0
+    buffer_fd[k1_max+2:end, :, :] .= 0
+
     if shift
-        broadcast!(*, buffer_fd, field, sf[1], sf[2])
-    else
-        buffer_fd .= field
+        broadcast!(*, buffer_fd, buffer_fd, sf[1], sf[2])
     end
 
     shifth, shiftv = (shift, ns isa NodeSet{:H})
     gs = (size(buffer_pd, 1), size(buffer_pd, 2), global_sum(size(buffer_pd, 3)) + (shiftv ? 0 : 1))
     xmin = (zero(T), zero(T), gm.vmap(zero(T)))
     xmax = (gm.hsize1, gm.hsize2, gm.vmap(one(T)))
-
 
     # when the indices are not shifted, the H-nodes start at zero
     # but the V-nodes start at Δz
@@ -122,16 +130,16 @@ function write_field(filename, field::Array{Complex{T}}, gm::GridMapping{T},
 end
 
 # TODO: change this to a function that shifts/unshifts a field in-place
-function shift_factors(T, nx_pd, ny_pd)
-    nkx = div(nx_pd, 2)
-    nky = div(ny_pd, 2)
-    kx = 0:nkx
-    ky = vcat(0:nky, (isodd(ny_pd) ? -nky : -nky + 1):-1)
-    shiftx = Complex{T}[exp(1im * kx * π / nx_pd) for kx=kx, ky=1:1, z=1:1]
-    shifty = Complex{T}[exp(1im * ky * π / ny_pd) for kx=1:1, ky=ky, z=1:1]
-    shiftx[nkx+1] *= (iseven(nx_pd) ? 0 : 1)
-    shifty[nky+1] *= (iseven(ny_pd) ? 0 : 1)
-    shiftx, shifty
+function shift_factors(T, n1_pd, n2_pd)
+    k1max = div(n1_pd, 2)
+    k2max = div(n2_pd, 2)
+    k1 = 0:k1max
+    k2 = vcat(0:k2max, (iseven(n2_pd) ? -k2max+1 : -k2max):-1)
+    shift1 = Complex{T}[exp(1im * k1 * π / n1_pd) for k1=k1, k2=1:1, i3=1:1]
+    shift2 = Complex{T}[exp(1im * k2 * π / n2_pd) for k1=1:1, k2=k2, i3=1:1]
+    shift1[k1max+1] *= (iseven(n1_pd) ? 0 : 1) # Nyquist frequency
+    shift2[k2max+1] *= (iseven(n2_pd) ? 0 : 1) # Nyquist frequency
+    shift1, shift2
 end
 
 """
@@ -220,7 +228,7 @@ function read_field!(field_fd::AbstractArray{Complex{T},3}, filename::String,
     xmin, xmax, x1, x2, x3, field_pd = read_field(filename, ns)
 
     # check that all data is as expected
-    n = (2*gd.nx_fd-1, gd.ny_fd, gd.nz_global)
+    n = (2*gd.nx_fd, gd.ny_fd+1, gd.nz_global)
     @assert all(xmin .≈ (zero(T), zero(T), gm.vmap(zero(T))))
     @assert all(xmax .≈ (gm.hsize1, gm.hsize2, gm.vmap(one(T))))
     @assert x1 ≈ LinRange(xmin[1], xmax[1], 2 * n[1] + 1)[2:2:end]
@@ -228,8 +236,18 @@ function read_field!(field_fd::AbstractArray{Complex{T},3}, filename::String,
     @assert x3 ≈ gm.vmap.(LinRange(zero(T), one(T), 2 * n[3] + 1)[(ns isa NodeSet{:V} ?
                                                            (3:2:end-1) : (2:2:end))])
 
-    LinearAlgebra.mul!(field_fd, get_plan_fwd(ht, ns), field_pd)
-    broadcast!((û, s1, s2) -> û / (n[1] * n[2] * s1 * s2), field_fd, field_fd, sf[1], sf[2])
+    buffer = get_buffer_fd(ht, ns)
+    LinearAlgebra.mul!(buffer, get_plan_fwd(ht, ns), field_pd)
+    broadcast!((û, s1, s2) -> û / (n[1] * n[2] * s1 * s2), buffer, buffer, sf[1], sf[2])
+
+    # TODO: the code below duplicates some functionality of the get_field
+    # function, so it should probably be merged with that one eventually
+
+    k2_max = div(n[2]-1, 2)
+    offset = size(buffer, 2) - size(field_fd, 2)
+    for i in CartesianIndices(field_fd)
+        field_fd[i] = i[2] <= 1+k2_max ? buffer[i] : buffer[i[1], i[2] + offset, i[3]]
+    end
     field_fd
 end
 
@@ -237,7 +255,7 @@ function read_snapshot!(vel, dir, gd::DistributedGrid, gm::GridMapping{T}) where
     fn = joinpath.(dir, ("u.cbd", "v.cbd", "w.cbd"))
     ns = (NodeSet(:H), NodeSet(:H), NodeSet(:V))
     ht = HorizontalTransform(T, gd, expand=false)
-    sf = shift_factors(T, 2*gd.nx_fd-1, gd.ny_fd)
+    sf = shift_factors(T, 2*gd.nx_fd, gd.ny_fd+1)
     Tuple(read_field!(vel[i], fn[i], gd, gm, ht, sf, ns[i]) for i=1:3)
 end
 

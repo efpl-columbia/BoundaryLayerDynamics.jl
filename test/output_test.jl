@@ -74,8 +74,8 @@ function test_shifted_file_output(T=Float64; Nx=6, Ny=8, Nz=12)
     lbcs = CF.bc_noslip(T, gd)
     ubcs = CF.bc_noslip(T, gd)
 
-    nx_file = 2*gd.nx_fd-1
-    ny_file = gd.ny_fd
+    nx_file = 2*gd.nx_fd
+    ny_file = gd.ny_fd+1
     sf_file = CF.shift_factors(T, nx_file, ny_file)
     ht_file = CF.HorizontalTransform(T, gd, expand=false)
 

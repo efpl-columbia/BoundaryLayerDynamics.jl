@@ -221,8 +221,8 @@ struct HorizontalTransform{T<:SupportedReals}
 end
 
 HorizontalTransform(T, gd::DistributedGrid; expand=true) = HorizontalTransform(T,
-        expand ? gd.nx_pd : 2*gd.nx_fd-1,
-        expand ? gd.ny_pd : gd.ny_fd,
+        expand ? gd.nx_pd : 2*gd.nx_fd,
+        expand ? gd.ny_pd : gd.ny_fd + 1,
         gd.nz_h, gd.nz_v)
 Broadcast.broadcastable(ht::HorizontalTransform) = Ref(ht) # to use as argument of elementwise functions
 
