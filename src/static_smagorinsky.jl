@@ -21,6 +21,36 @@ RoughWallEquilibriumBC(roughness_length::T, gd::DistributedGrid,
                        gm.vmap(one(T)/(2*gd.nz_global)),
                        (gd.nx_fd, gd.ny_fd), (gd.nx_pd, gd.ny_pd))
 
+"""
+    StaticSmagorinskyModel(<keyword arguments>)
+
+Define a static Smagorinsky model for subgrid-scale stresses, based on [Smagorinsky
+(1963)](https://doi.org/10.1175/1520-0493(1963)091%3C0099:GCEWTP%3E2.3.CO;2).
+The model is based on the eddy viscosity assumption
+
+``τ_{ij}^{sgs} = - 2 ν_T S_{ij}``
+
+with ``S_{ij}`` denoting the resolved rate of strain tensor. The eddy
+viscosity ``ν_T`` is modeled as
+
+``ν_T = C_s^2 Δ^2 |S|``
+
+where ``Δ=(Δ_1+Δ_2+Δ_3)^{1/3}`` is the scale of the grid spacing,
+``|S|=(2S_{ij}S_{ij})^{1/2}`` is the total rate of strain, and ``C_s`` is a
+non-dimensional model coefficient.
+
+The model can optionally reduce the mixing length close to rough-wall surfaces
+using the wall-damping function described in [Mason & Thomson
+(1992)](https://doi.org/10.1017/S0022112092002271).
+
+# Arguments
+
+- `Cs=0.1`: the model coefficient ``C_s``
+- `wall_damping=false`: if set, a Mason-Thomson wall-damping function is used
+  to reduce the mixing length close to rough-wall surfaces
+- `wall_damping_exponent=2`: the exponent used in the Mason–Thomson
+  wall-damping function
+"""
 struct StaticSmagorinskyModel{T1,T2}
     model_constant::T1
     wall_damping::Bool

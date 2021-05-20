@@ -129,6 +129,22 @@ GridMapping(L1::T, L2::T, (x3, dx3dζ)::Tuple{Function,Function}) where T =
     GridMapping(L1, L2, x3, dx3dζ)
 Broadcast.broadcastable(gm::GridMapping) = Ref(gm) # to use as argument of elementwise functions
 
+"""
+    SinusoidalMapping(η)
+
+Define a transformed vertical coordinate with the mapping
+
+``x_3/δ = 1 + \\frac{sin(η (ζ-1) π/2)}{sin(η π/2)}``
+
+for a half-channel, where ``0≤ζ≤1``. For a full channel, the transformed grid
+is mirrored in the upper half.
+
+The parameter ``0<η<1`` controls the strength of the grid stretching, where
+values close to ``0`` result in a more equidistant spacing and values close to
+``1`` result in a higher density of grid points close to the wall(s). The value
+``η=1`` is not allowed since it produces a vanishing derivative of the mapping
+function at the wall.
+"""
 struct SinusoidalMapping
     parameter
     SinusoidalMapping(η) = (@assert 0 < η < 1; new(η))

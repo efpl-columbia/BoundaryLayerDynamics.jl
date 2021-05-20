@@ -1,8 +1,34 @@
 abstract type TimeIntegrationAlgorithm end
 abstract type OrdinaryDiffEqAlgorithm <: TimeIntegrationAlgorithm end
+
+"""
+    Euler()
+
+First-order forward Euler time integration.
+"""
 struct Euler <: TimeIntegrationAlgorithm end
+
+"""
+    AB2()
+
+Second-order Adams-Bashforth time integration.
+"""
 struct AB2 <: TimeIntegrationAlgorithm end
+
+"""
+    SSPRK22()
+
+Two-stage second-order strong-stability-preserving Runge-Kutta time
+integration.
+"""
 struct SSPRK22 <: OrdinaryDiffEqAlgorithm end
+
+"""
+    SSPRK33()
+
+Three-stage third-order strong-stability-preserving Runge-Kutta time
+integration.
+"""
 struct SSPRK33 <: OrdinaryDiffEqAlgorithm end
 
 abstract type TimeIntegrationCache{T} end
