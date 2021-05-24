@@ -19,7 +19,7 @@ struct MeanProfiles{T}
     wzwz::Array{T,1}
 
     # TODO: reorganize these profiles with better names & structures
-    MeanProfiles(T, n3h, n3v) = new{T}(
+    MeanProfiles(::Type{T}, n3h, n3v) where T = new{T}(
         (zeros(T, n3h), zeros(T, n3h), zeros(T, n3v)), # (u1, u2, u3)
         zeros(T, n3h), zeros(T, n3h), zeros(T, n3v), zeros(n3h), # uu, vv, ww, uv
         zeros(T, n3h), zeros(T, n3h), zeros(T, n3h), zeros(n3h), # uwa, uwb, vwa, vwb

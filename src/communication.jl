@@ -53,7 +53,7 @@ struct UnspecifiedBC{P,T} <: BoundaryCondition{P,T}
     buffer_pd::Array{T,2}
     neighbor_below::Int
     neighbor_above::Int
-    UnspecifiedBC(T, gd::DistributedGrid) =
+    UnspecifiedBC(::Type{T}, gd::DistributedGrid) where T =
         new{proc_type(),T}(zeros(Complex{T}, gd.nx_fd, gd.ny_fd),
         zeros(T, gd.nx_pd, gd.ny_pd), proc_below(), proc_above())
 end

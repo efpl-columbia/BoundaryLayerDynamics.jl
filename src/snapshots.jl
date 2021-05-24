@@ -22,7 +22,7 @@ end
 write_field(filename, field::Array{T}, x, y, z, domain_min, domain_max) where T =
     write_field(eltype(field), filename, field, x, y, z, domain_min, domain_max)
 
-function write_field(T, filename, field, x, y, z, domain_min, domain_max)
+function write_field(::Type{T}, filename, field, x, y, z, domain_min, domain_max) where T
 
     # build first value, describing the version of the file format that is used
     identifier = zeros(UInt8, 8)
@@ -130,7 +130,7 @@ function write_field(filename, field::Array{Complex{T}}, gm::GridMapping{T},
 end
 
 # TODO: change this to a function that shifts/unshifts a field in-place
-function shift_factors(T, n1_pd, n2_pd)
+function shift_factors(::Type{T}, n1_pd, n2_pd) where T
     k1max = div(n1_pd, 2)
     k2max = div(n2_pd, 2)
     k1 = 0:k1max

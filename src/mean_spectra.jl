@@ -10,7 +10,7 @@ struct MeanSpectra{T}
     Eij_k1::Array{T,3}
     Eij_k2::Array{T,3}
     indices::NTuple{3,NTuple{3,Int}}
-    MeanSpectra(T, k1max, k2max, n3) = new{T}(
+    MeanSpectra(::Type{T}, k1max, k2max, n3) where T = new{T}(
         zeros(T, 1+k1max, 6, n3),
         zeros(T, 1+k2max, 6, n3),
         ((1, 6, 4), (6, 2, 5), (4, 5, 3)),

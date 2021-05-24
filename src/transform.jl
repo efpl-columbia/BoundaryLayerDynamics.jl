@@ -95,10 +95,10 @@ end
 # create new fields initialized to zero
 get_nz(gd::DistributedGrid, ns::NodeSet{:H}) = gd.nz_h
 get_nz(gd::DistributedGrid, ns::NodeSet{:V}) = gd.nz_v
-zeros_fd(T, gd::DistributedGrid, ns::NodeSet) = zeros(Complex{T}, gd.nx_fd, gd.ny_fd, get_nz(gd, ns))
-zeros_pd(T, gd::DistributedGrid, ns::NodeSet) = zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
-zeros_fd(T, gd, ns::Symbol) = zeros_fd(T, gd, NodeSet(ns))
-zeros_pd(T, gd, ns::Symbol) = zeros_pd(T, gd, NodeSet(ns))
+zeros_fd(::Type{T}, gd::DistributedGrid, ns::NodeSet) where T = zeros(Complex{T}, gd.nx_fd, gd.ny_fd, get_nz(gd, ns))
+zeros_pd(::Type{T}, gd::DistributedGrid, ns::NodeSet) where T = zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
+zeros_fd(::Type{T}, gd, ns::Symbol) where T = zeros_fd(T, gd, NodeSet(ns))
+zeros_pd(::Type{T}, gd, ns::Symbol) where T = zeros_pd(T, gd, NodeSet(ns))
 
 
 """
@@ -114,11 +114,11 @@ be supplied explicitly and do not check whether they are consistent.
 """
 # GridMapping describes how the computational grid relates to the physical domain.
 # In horizontal direction, this contains the length of periodicity
-struct GridMapping{T}
+struct GridMapping{T,F1<:Function,F2<:Function}
     hsize1::T
     hsize2::T
-    vmap::Function # [0,1] → physical domain
-    Dvmap::Function
+    vmap::F1 # [0,1] → physical domain
+    Dvmap::F2
 end
 
 GridMapping(L1::T, L2::T, L3::T) where T =
@@ -170,14 +170,14 @@ end
 
 instantiate(mapping, L3, one_sided) = instantiate(mapping, (zero(L3), L3), one_sided)
 
-function vrange(T, gd, ::NodeSet{:H}; neighbors=false)
+function vrange(::Type{T}, gd, ::NodeSet{:H}; neighbors=false) where T
     ζ = LinRange(zero(T), one(T), 2*gd.nz_global+1) # all ζ-values
     imin = 2*gd.iz_min - (neighbors ? 1 : 0)
     imax = 2*gd.iz_max + (neighbors ? 1 : 0)
     ζ[imin:2:imax]
 end
 
-function vrange(T, gd, ::NodeSet{:V}; neighbors=false)
+function vrange(::Type{T}, gd, ::NodeSet{:V}; neighbors=false) where T
     ζ = LinRange(zero(T), one(T), 2*gd.nz_global+1) # all ζ-values
     imin = 2*gd.iz_min+1 - (neighbors ? 1 : 0)
     imax = 2*(gd.iz_min+gd.nz_v-1)+1 + (neighbors ? 1 : 0)
@@ -205,7 +205,7 @@ struct HorizontalTransform{T<:SupportedReals}
     buffer_fd_h::Array{Complex{T},3}
     buffer_fd_v::Array{Complex{T},3}
 
-    HorizontalTransform(T, nx, ny, nz_h, nz_v) = begin
+    HorizontalTransform(::Type{T}, nx, ny, nz_h, nz_v) where T = begin
 
         buffer_pd_h = zeros(T, nx, ny, nz_h)
         buffer_pd_v = zeros(T, nx, ny, nz_v)
@@ -220,7 +220,7 @@ struct HorizontalTransform{T<:SupportedReals}
     end
 end
 
-HorizontalTransform(T, gd::DistributedGrid; expand=true) = HorizontalTransform(T,
+HorizontalTransform(::Type{T}, gd::DistributedGrid; expand=true) where T = HorizontalTransform(T,
         expand ? gd.nx_pd : 2*gd.nx_fd,
         expand ? gd.ny_pd : gd.ny_fd + 1,
         gd.nz_h, gd.nz_v)

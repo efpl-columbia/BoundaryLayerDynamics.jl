@@ -37,7 +37,7 @@ struct DistributedBatchLDLt{P,Tm,Tv,B} #<: AbstractMatrix{T}
     β::Matrix{Tm} # off-diagonal
     buffer::Vector{Tv}
 
-    DistributedBatchLDLt(Tm, dvs, evs, rhs, batch_size) = begin
+    DistributedBatchLDLt(::Type{Tm}, dvs, evs, rhs, batch_size) where Tm = begin
 
         P = proc_type()
         nk = length(dvs)
@@ -171,7 +171,7 @@ LinearAlgebra.ldiv!(x, A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(A, copy
 LinearAlgebra.:\(A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(similar(b), A, b)
 
 # Compute the diagonal of D₃G₃, excluding the αc-factor: -α(1), -α(1)-α(2), …, -α(N-2)-α(N-1), -α(N-1)
-function d3g3_diagonal(T, gd, gm)
+function d3g3_diagonal(::Type{T}, gd, gm) where T
     αi_ext = T[gd.nz_global / gm.Dvmap(ζ) for ζ=vrange(T, gd, NodeSet(:H), neighbors=true)]
     imin = gd.iz_min == 1 ? 2 : 1 # exclude value at lower boundary
     imax = gd.nz_v # exclude value at upper boundary
@@ -182,7 +182,7 @@ function d3g3_diagonal(T, gd, gm)
 end
 
 # Compute the off-diagonal of D₃G₃, excluding the αc-factor: α(0), α(1), …, α(N-1)
-function d3g3_offdiagonal(T, gd, gm)
+function d3g3_offdiagonal(::Type{T}, gd, gm) where T
     T[gd.nz_global / gm.Dvmap(ζ) for ζ=vrange(T, gd, NodeSet(:V))]
 end
 

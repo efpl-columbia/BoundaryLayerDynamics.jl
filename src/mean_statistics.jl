@@ -9,8 +9,8 @@ struct MeanStatistics{T}
     start_it::Ref{Int}
     counter::Ref{Int}
 
-    MeanStatistics(T, gd::DistributedGrid, path::String, frequency::Int,
-                 total_count::Int) = new{T}(MeanProfiles(T, gd.nz_h, gd.nz_v),
+    MeanStatistics(::Type{T}, gd::DistributedGrid, path::String, frequency::Int,
+                 total_count::Int) where T = new{T}(MeanProfiles(T, gd.nz_h, gd.nz_v),
         MeanSpectra(T, gd.nx_fd-1, div(gd.ny_fd-1, 2), gd.nz_h),
         path, frequency, Ref(0), total_count, Ref(zero(T)), Ref(0), Ref(0))
 end

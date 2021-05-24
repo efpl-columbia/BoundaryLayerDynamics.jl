@@ -41,12 +41,14 @@ init_bcs(bcs::NTuple{3,Union{String,Pair}}, gd::DistributedGrid,
     @error "Invalid boundary condition" bc
 end
 
-bc_noslip(T, gd) = (DirichletBC(zero(T), gd),
-                    DirichletBC(zero(T), gd),
-                    DirichletBC(zero(T), gd))
-bc_freeslip(T, gd) = (NeumannBC(zero(T), gd),
-                      NeumannBC(zero(T), gd),
-                    DirichletBC(zero(T), gd))
+bc_noslip(::Type{T}, gd) where T = (
+        DirichletBC(zero(T), gd),
+        DirichletBC(zero(T), gd),
+        DirichletBC(zero(T), gd))
+bc_freeslip(::Type{T}, gd) where T = (
+        NeumannBC(zero(T), gd),
+        NeumannBC(zero(T), gd),
+        DirichletBC(zero(T), gd))
 
 bc_noslip() = ("Dirichlet", "Dirichlet", "Dirichlet")
 bc_freeslip() = ("Neumann", "Neumann", "Dirichlet")
