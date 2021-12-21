@@ -197,7 +197,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
         output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
         profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
-        method = SSPRK33(), verbose=true) where {P,T}
+        method = SSPRK33(dt=dt), verbose=true) where {P,T}
 
     to = TimerOutputs.get_defaulttimer()
     oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
@@ -207,7 +207,19 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)
 
-    rate! = (du, u, t) -> begin
+    log = (state, tstep, t) -> begin
+        TimerOutputs.@timeit to "output" begin
+            TimerOutputs.@timeit to "flow statistics" log_statistics!(stats, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
+            TimerOutputs.@timeit to "snapshots" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
+        end
+    end
+
+    tstep = 0
+    rate! = (du, u, t; checkpoint = false) -> begin
+        if checkpoint
+            tstep += 1
+            log(u, tstep, t)
+        end
         TimerOutputs.@timeit to "advection" _, dt_adv = set_advection!(du.x, u.x,
             cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
         TimerOutputs.@timeit to "diffusion" _, dt_dif = add_diffusion!(du.x, u.x,
@@ -223,13 +235,6 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         end
     end
 
-    log = (state, tstep, t) -> begin
-        TimerOutputs.@timeit to "output" begin
-            TimerOutputs.@timeit to "flow statistics" log_statistics!(stats, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
-            TimerOutputs.@timeit to "snapshots" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
-        end
-    end
-
     # initialize integrator and perform one step to compile functions
     TimerOutputs.@timeit to "initialization" begin
         u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
@@ -238,7 +243,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     end
 
     # perform the full integration
-    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, dt, log)
+    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, checkpoints=1)
     for i=1:3
         cf.velocity[i] .= sol.x[i]
     end

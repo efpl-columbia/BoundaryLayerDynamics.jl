@@ -9,7 +9,7 @@ function setup_random_fields(T, nx, ny, nz)
 end
 
 function test_convergence(N, ε; exponential=false, order=nothing,
-        threshold_linearity=0.99, threshold_slope=0.95)
+        threshold_linearity=0.99, threshold_slope=0.95, verbose=false)
 
     X = exponential ? N : log.(N)
     Y = log.(ε)
@@ -26,7 +26,8 @@ function test_convergence(N, ε; exponential=false, order=nothing,
     @test Rsq > threshold_linearity
 
     if order != nothing
-        @test - slope / order > threshold_slope
+        @test - slope > order * threshold_slope
+        verbose && println("Passed with order $(-slope) (R²=$(Rsq))")
     end
 
     - slope, Rsq
