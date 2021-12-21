@@ -10,7 +10,7 @@ Set up and run a simple large-eddy simulation interactively:
 
 ```juliarepl
 julia> cf = prepare_open_channel(64, Re=1e6, roughness_length=1e-3,
-       sgs_model=StaticSmagorinsky())
+       sgs_model=StaticSmagorinskyModel())
 julia> integrate!(cf, 1e-3, 1000)
 ```
 
