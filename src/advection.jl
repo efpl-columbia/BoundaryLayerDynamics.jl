@@ -9,6 +9,9 @@ end
     ubcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
     @. advu = rotw * v - 0.5 * (rotv¯ * w¯)
 end
+advu!(_, _, _, _, ::DirichletBC, ::DirichletBC, _) =
+    error("Simulations with only one vertical layer are not supported")
+
 
 # compute one layer of -(rotz[uvp]*u[uvp]-rotx[w]*w[w]) on uvp-nodes
 @inline advv!(advv, u, rotu¯, rotu⁺, w¯, w⁺, rotw) =
@@ -21,6 +24,8 @@ end
     ubcw.value == 0 || error("Advection for non-zero w at boundary not implemented")
     @. advv = 0.5 * (rotu¯ * w¯) - rotw * u
 end
+advv!(_, _, _, _, ::DirichletBC, ::DirichletBC, _) =
+    error("Simulations with only one vertical layer are not supported")
 
 # compute one layer of -(rotx[w]*v[uvp]-roty[w]*u[uvp]) on w-nodes
 @inline advw!(advw, u¯, u⁺, rotu, v¯, v⁺, rotv) =
