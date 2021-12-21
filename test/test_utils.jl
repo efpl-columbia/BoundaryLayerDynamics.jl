@@ -63,7 +63,9 @@ function run_mpi_test(file, nprocs::Integer)
     path = joinpath(dirname(@__FILE__), file)
     pass = true
     try
-        run(`mpiexec -n $(nprocs) --oversubscribe $(juliabin) "--project=$(project)" $(path)`)
+        MPI.mpiexec() do cmd
+            run(`$cmd -n $(nprocs) $(juliabin) "--project=$(project)" $(path)`)
+        end
     catch
         st = stacktrace()[2:end]
         showerror(stderr, MPITestSetException(nprocs,
