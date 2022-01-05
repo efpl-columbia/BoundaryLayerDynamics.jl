@@ -7,10 +7,12 @@ function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
     dt = (2/Nv)^2 * Re * CFL
 
     mktempdir_parallel() do dir
-        integrate!(cf, dt, Nt, output_io = devnull,
-            profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
-            snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
-            snapshot_dir = joinpath(dir, "snapshots"), verbose = true)
+        redirect_stdout(devnull) do # keep output verbose to check for errors in output routines
+            integrate!(cf, dt, Nt,
+                profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
+                snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
+                snapshot_dir = joinpath(dir, "snapshots"), verbose = false)
+        end
 
         # attempt setting the velocity from the latest snapshot
         last_snapshot = readdir(joinpath(dir, "snapshots"))[end]

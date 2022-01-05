@@ -140,21 +140,21 @@ get_velocity(cf::ChannelFlowProblem) = get_velocity(cf.grid, cf.transform, cf.ve
 
 coords(cf::ChannelFlowProblem, ns::NodeSet) = coords(cf.grid, cf.mapping, ns)
 
-function show_all(io::IO, to::TimerOutputs.TimerOutput)
+function show_all(to::TimerOutputs.TimerOutput)
     if MPI.Initialized()
         r = MPI.Comm_rank(MPI.COMM_WORLD)
         s = MPI.Comm_size(MPI.COMM_WORLD)
         for i=1:s
             if i==r+1
-                println(io, "Timing of process ", i, ":")
-                show(io, to)
-                println(io) # newline is missing in show(to)
+                println("Timing of process ", i, ":")
+                show(to)
+                println() # newline is missing in show(to)
             end
             MPI.Barrier(MPI.COMM_WORLD)
         end
     else
-        show(io, to)
-        println(io) # newline is missing in show(to)
+        show(to)
+        println() # newline is missing in show(to)
     end
 end
 
@@ -195,13 +195,13 @@ collecting data about the flow at different points in time.
 """
 function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
-        output_io = Base.stdout, output_frequency = max(1, round(Int, nt / 100)),
+        output_frequency = max(1, round(Int, nt / 100)),
         profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
         method = SSPRK33(dt=dt), verbose=true) where {P,T}
 
     to = TimerOutputs.get_defaulttimer()
     oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
-            cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_io, output_frequency)
+            cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_frequency)
     stats = MeanStatistics(T, cf.grid, profiles_dir, profiles_frequency,
             profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
     dt_adv = (zero(T), zero(T), zero(T))
@@ -247,6 +247,6 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     for i=1:3
         cf.velocity[i] .= sol.x[i]
     end
-    verbose && show_all(oc.diagnostics_io, to)
+    verbose && show_all(to)
     sol
 end
