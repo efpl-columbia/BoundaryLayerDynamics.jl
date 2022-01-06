@@ -1,3 +1,8 @@
+"""
+The `TimeIntegrationAlgorithm` structs are used as arguments to the time
+integration methods to specify the algorithm used for integration. They are
+only used to select the correct methods in multiple-dispatch functions.
+"""
 abstract type TimeIntegrationAlgorithm end
 
 """
@@ -30,37 +35,45 @@ integration.
 """
 struct SSPRK33 <: TimeIntegrationAlgorithm end
 
-abstract type TimeIntegrationCache{T} end
+"""
+The `TimeIntegrationBuffer` structs hold the variables each method requires to
+compute the next time step without allocating new memory.
 
-struct EulerCache{T} <: TimeIntegrationCache{T}
-    EulerCache(prob) = new{typeof(prob.u)}()
+Each algorithm should implement a method `init_buffer(prob, alg)` that takes
+the `TimeIntegrationAlgorithm` as an argument and creates the corresponding
+buffer, which will then be passed every time [`perform_step!`](@ref) is called.
+"""
+abstract type TimeIntegrationBuffer{T} end
+
+struct EulerBuffer{T} <: TimeIntegrationBuffer{T}
+    EulerBuffer(prob) = new{typeof(prob.u)}()
 end
 
-struct AB2Cache{T} <: TimeIntegrationCache{T}
+struct AB2Buffer{T} <: TimeIntegrationBuffer{T}
     duprev::T
     last_dt::Ref{Float64}
-    AB2Cache(prob) = new{typeof(prob.u)}(zero(prob.du) * NaN, Ref(NaN))
+    AB2Buffer(prob) = new{typeof(prob.u)}(zero(prob.du) * NaN, Ref(NaN))
 end
 
-struct SSPRK22Cache{T} <: TimeIntegrationCache{T}
+struct SSPRK22Buffer{T} <: TimeIntegrationBuffer{T}
     utmp::T
-    SSPRK22Cache(prob) = new{typeof(prob.u)}(zero(prob.u) * NaN)
+    SSPRK22Buffer(prob) = new{typeof(prob.u)}(zero(prob.u) * NaN)
 end
 
-struct SSPRK33Cache{T} <: TimeIntegrationCache{T}
+struct SSPRK33Buffer{T} <: TimeIntegrationBuffer{T}
     utmp::T
-    SSPRK33Cache(prob) = new{typeof(prob.u)}(zero(prob.u) * NaN)
+    SSPRK33Buffer(prob) = new{typeof(prob.u)}(zero(prob.u) * NaN)
 end
 
-init_cache(prob, ::Euler) = EulerCache(prob)
-init_cache(prob, ::AB2) = AB2Cache(prob)
-init_cache(prob, ::SSPRK22) = SSPRK22Cache(prob)
-init_cache(prob, ::SSPRK33) = SSPRK33Cache(prob)
+init_buffer(prob, ::Euler) = EulerBuffer(prob)
+init_buffer(prob, ::AB2) = AB2Buffer(prob)
+init_buffer(prob, ::SSPRK22) = SSPRK22Buffer(prob)
+init_buffer(prob, ::SSPRK33) = SSPRK33Buffer(prob)
 
 """
-    perform_step!(problem, dt, cache)
+    perform_step!(problem, dt, buffer)
 
-Advance the solution `problem.u` by a time step of `dt`. The type of `cache`
+Advance the solution `problem.u` by a time step of `dt`. The type of `buffer`
 determines which integration scheme is used and stores intermediate values
 required by the scheme.
 
@@ -70,12 +83,12 @@ step, as this is done by the caller.
 """
 function perform_step! end
 
-function perform_step!(problem, dt, ::EulerCache)
+function perform_step!(problem, dt, ::EulerBuffer)
     problem.u .+= dt * problem.du
     problem.projection!(problem.u)
 end
 
-function perform_step!(problem, dt, c::AB2Cache)
+function perform_step!(problem, dt, c::AB2Buffer)
     if isnan(c.last_dt[])
         # first step: f(u,t) of previous step is not available yet
         # -> run a single Runge-Kutta step
@@ -103,7 +116,7 @@ function perform_step!(problem, dt, c::AB2Cache)
     end
 end
 
-function perform_step!(problem, dt, c::SSPRK22Cache)
+function perform_step!(problem, dt, c::SSPRK22Buffer)
 
     # u1 = u0 + dt f(u0, t0)
     @. c.utmp = problem.u + dt * problem.du
@@ -117,7 +130,7 @@ function perform_step!(problem, dt, c::SSPRK22Cache)
     problem.projection!(problem.u)
 end
 
-function perform_step!(problem, dt, c::SSPRK33Cache)
+function perform_step!(problem, dt, c::SSPRK33Buffer)
 
     # u1 = u0 + dt f(u0, t0)
     @. c.utmp = problem.u + dt * problem.du
@@ -160,11 +173,18 @@ end
 time(prob::TimeIntegrationProblem) = prob.t[]
 state(prob::TimeIntegrationProblem) = prob.u
 
+"""
+    solve!(problem, algorithm, dt, checkpoints = nothing)
+
+Step the time integration problem `prob` forward in time with the specified
+algorithm and time step, hitting all the checkpoints exactly during the
+integration and signaling them to the `rate!` function of the problem.
+"""
 function solve!(prob::TimeIntegrationProblem{Tt},
         alg::TimeIntegrationAlgorithm,
         dt::Tt;
         checkpoints::Union{Int,Nothing} = nothing) where {Tt}
-    cache = init_cache(prob, alg)
+    buffer = init_buffer(prob, alg)
     nt_float = (prob.tmax - prob.t[]) / dt
     nt = round(Int, nt_float)
     nt ≈ nt_float || error("Integration time not divisible by (constant) time step.")
