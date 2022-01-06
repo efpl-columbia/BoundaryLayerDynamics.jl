@@ -24,10 +24,9 @@ end
 function test_constant_growth(alg)
     # constant growth should be integrated exactly by all methods
     rate!(du, u, t) = du .= 1
-    projection!(u) = u
     u0 = [0.0]
     t = (0.0, 1.0)
-    prob = CF.TimeIntegrationProblem(rate!, projection!, u0, t)
+    prob = CF.TimeIntegrationProblem(rate!, u0, t)
     dt = 1e-2
     CF.solve(prob, alg(dt=dt))
     @test CF.time(prob) ≈ 1.0
@@ -51,10 +50,9 @@ function test_projection(alg)
 end
 
 function ode_error(ode, alg, nt)
-    projection! = u -> u # do nothing for projection
     dt = ode.T[end]/nt
     u0 = ode.uref(ode.T[1])
-    prob = CF.TimeIntegrationProblem(ode.rate!, projection!, u0, ode.T)
+    prob = CF.TimeIntegrationProblem(ode.rate!, u0, ode.T)
     CF.solve(prob, alg(dt=dt))
     sqrt(sum(abs2.(ode.uref(ode.T[end]) .- CF.state(prob)))) # error
 end
@@ -70,14 +68,13 @@ end
 function test_checkpoints(alg)
     times = []
     rate!(du, u, t; checkpoint = false) = (checkpoint && push!(times, t); du .= 1)
-    projection!(u) = u
     t = (0.0, 1.0)
     nt = 10
     dt = t[end] / nt
 
     for checkpoints in (nothing, 1, 3, 5)
         empty!(times)
-        prob = CF.TimeIntegrationProblem(rate!, projection!, [0.0], t)
+        prob = CF.TimeIntegrationProblem(rate!, [0.0], t)
         if checkpoints == nothing
             CF.solve(prob, alg(dt=dt), checkpoints = checkpoints)
             @test times == []

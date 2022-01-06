@@ -169,6 +169,9 @@ struct TimeIntegrationProblem{T,R,P}
     tmax::Float64
 end
 
+TimeIntegrationProblem(rate!, u0, tspan; kwargs...) =
+    TimeIntegrationProblem(rate!, u -> u, u0, tspan; kwargs...)
+
 function TimeIntegrationProblem(rate!, projection!, u0, (t1, t2))
     du = zero(u0)
     projection!(u0)
