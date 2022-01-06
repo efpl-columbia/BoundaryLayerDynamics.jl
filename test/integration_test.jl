@@ -8,7 +8,7 @@ function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
 
     mktempdir_parallel() do dir
         redirect_stdout(devnull) do # keep output verbose to check for errors in output routines
-            integrate!(cf, dt, Nt,
+            integrate!(cf, dt * Nt, dt = dt,
                 profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
                 snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
                 snapshot_dir = joinpath(dir, "snapshots"), verbose = false)
@@ -85,7 +85,7 @@ function test_constant_flux_poiseuille(nz)
     cf1 = prepare_closed_channel(1.0, (4, 4, nz), constant_flux = false)
 
     for i=1:nit
-        integrate!(cf1, dt, nt, verbose=false)
+        integrate!(cf1, dt * nt, dt = dt, verbose = false)
         ε_constant_force[i] = ε(cf1)
     end
 
@@ -93,7 +93,7 @@ function test_constant_flux_poiseuille(nz)
     cf2 = ChannelFlowProblem((4, 4, nz), (4π, 2π, 2.0),
         CF.bc_noslip(), CF.bc_noslip(), 1.0, (mf, 0.0), true)
     for i=1:nit
-        integrate!(cf2, dt, nt, verbose=false)
+        integrate!(cf2, dt * nt, dt = dt, verbose = false)
         ε_constant_flux[i] = ε(cf2)
     end
 

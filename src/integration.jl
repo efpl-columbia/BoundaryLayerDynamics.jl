@@ -162,48 +162,63 @@ load_snapshot!(cf::ChannelFlowProblem, snapshot_dir) =
     read_snapshot!(cf.velocity, snapshot_dir, cf.grid, cf.mapping)
 
 """
-    integrate!(channel_flow, step_size, steps, <keyword arguments>)
+    integrate!(channelflow, tspan; <keyword arguments>)
 
 Simulate the development of a [`ChannelFlowProblem`] in time, optionally
 collecting data about the flow at different points in time.
 
 # Arguments
 
-- `channel_flow`: the flow that is simulated; original flow field is
+- `channelflow`: the flow that is simulated; original flow field is
   overwritten.
-- `step_size`: the (constant) size of each time step ``Δt``; needs to be small
+- `tspan`: the duration for which the flow is simulated, either a single
+  value or a tuple with the start and end time
+- `dt`: the (constant) size of each time step ``Δt``; needs to be small
   enough to prevent the solution from becoming unstable.
-- `steps`: the number of time steps ``N_t`` of size ``Δt`` that are taken
-- `snapshot_steps=[]`: array of steps after which a snapshot of the flow
-  field is saved as a binary file.
-- `snapshot_dir="snapshots"`: the (absolute or relative to the current working
-  directory) in which files with snapshots of the velocity field will be saved.
-- `output_frequency=div(steps,100)` the number of time steps after which a
-  summary of flow statistics is printed to the standard output.
-- `profiles_dir="profiles"`: the path (absolute or relative to the current
-  working directory) in which files with mean profiles will be saved.
-- `profiles_frequency`: the number of time steps after which mean profiles are
-  saved and reset. It is recommended to save profiles around 10–20 times per
-  simulation to allow removing an initial transient period and evaluate the
-  impact of the averaging period during the analysis of the results.
 - `method=SSPRK33()`: the method used for time integration. Currently supported
   methods are [`Euler`](@ref), [`AB2`](@ref), [`SSPRK22`](@ref), and
   [`SSPRK33`](@ref).
 - `verbose=true`: if set, a summary of flow statistics is printed occasionally
   during the simulation and information on the computational performance is
   printed at the end of the simulation.
+- `output_frequency=div(steps,100)` the number of time steps after which a
+  summary of flow statistics is printed to the standard output.
+- `snapshot_steps=[]`: array of steps after which a snapshot of the flow
+  field is saved as a binary file.
+- `snapshot_dir="snapshots"`: the (absolute or relative to the current working
+  directory) in which files with snapshots of the velocity field will be saved.
+- `profiles_frequency`: the number of time steps after which mean profiles are
+  saved and reset. It is recommended to save profiles around 10–20 times per
+  simulation to allow removing an initial transient period and evaluate the
+  impact of the averaging period during the analysis of the results.
+- `profiles_dir="profiles"`: the path (absolute or relative to the current
+  working directory) in which files with mean profiles will be saved.
 """
-function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
+function integrate!(cf::ChannelFlowProblem{P,T}, tspan;
+        # time stepping
+        dt = nothing, method = SSPRK33(),
+        # output of diagnostics
+        verbose=true, output_frequency = max(1, round(Int, (last(tspan) / dt) / 100)),
+        # output of snapshots
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
-        output_frequency = max(1, round(Int, nt / 100)),
-        profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
-        method = SSPRK33(), verbose=true) where {P,T}
+        # output of profiles
+        profiles_frequency = 0, profiles_dir = joinpath(pwd(), "profiles"),
+        ) where {P,T}
 
+    # validate/normalize time arguments
+    isnothing(dt) && ArgumentError("The keyword argument `dt` is mandatory")
+    t1 = length(tspan) == 1 ? zero(first(tspan)) : first(tspan)
+    t2 = last(tspan)
+    t1, t2, dt = promote(t1, t2, dt)
+
+    # set up logging
     to = TimerOutputs.get_defaulttimer()
+    nt = approxdiv(t2 - t1, dt)
     oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
             cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_frequency)
     stats = MeanStatistics(T, cf.grid, profiles_dir, profiles_frequency,
             profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
+
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)
 
@@ -238,8 +253,8 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     # initialize integrator and perform one step to compile functions
     TimerOutputs.@timeit to "initialization" begin
         u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
-        prob = TimeIntegrationProblem(rate!, projection!, u0, (0.0, dt*nt))
-        log(prob.u, 0, 0.0)
+        prob = TimeIntegrationProblem(rate!, projection!, u0, (t1, t2))
+        log(prob.u, 0, t1)
     end
 
     # perform the full integration

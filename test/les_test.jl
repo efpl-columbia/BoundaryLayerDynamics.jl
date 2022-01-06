@@ -52,7 +52,7 @@ function test_closed_channel_les(n)
     # check thar integration runs without error
     dt = 1e-3
     nt = 10
-    integrate!(cfp, dt, nt, verbose=false)
+    integrate!(cfp, dt * nt, dt = dt, verbose = false)
 
 end
 
@@ -75,7 +75,7 @@ function test_open_channel_les(n)
     # check thar integration runs without error
     dt = 1e-3
     nt = 10
-    integrate!(cfp, dt, nt, verbose=false)
+    integrate!(cfp, dt * nt, dt = dt, verbose = false)
 
 end
 

@@ -109,7 +109,7 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
         f .* dir, # pressure forcing
         false, # constant flux forcing
     )
-    integrate!(cf, t / Nt, Nt, verbose=false)
+    integrate!(cf, t, dt = t / Nt, verbose = false)
     vel = CF.get_velocity(cf)
 
     uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=CF.x3(cf.grid, cf.mapping, CF.NodeSet(:H))]
@@ -165,7 +165,7 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
     ic = Tuple((x,y,z) -> uref(x,y,z,zero(T)) for uref=(u1ref, u2ref, u3ref))
     cf = ChannelFlowProblem((Nh, Nh, Nv), ds, CF.bc_freeslip(), CF.bc_freeslip(), ν, (zero(T), zero(T)), false)
     set_velocity!(cf, ic)
-    integrate!(cf, t / Nt, Nt, verbose=false)
+    integrate!(cf, t, dt = t / Nt, verbose = false)
     vel = CF.get_velocity(cf)
 
     #nx1, nx2, nx3 = size(vel[1])
