@@ -3,7 +3,7 @@ module ChannelFlow
 __precompile__(false)
 
 import LinearAlgebra, MPI, FFTW, TimerOutputs,
-       RecursiveArrayTools, Printf, JSON
+       RecursiveArrayTools, Printf, JSON, HDF5
 
 export prepare_closed_channel, prepare_open_channel, set_velocity!, integrate!,
        ChannelFlowProblem, FreeSlipBoundary, SmoothWallBoundary, RoughWallBoundary,
@@ -14,6 +14,7 @@ export Euler, AB2, SSPRK22, SSPRK33
 include("util.jl")
 include("transform.jl")
 include("communication.jl")
+include("logging.jl")
 include("derivatives.jl")
 include("advection.jl")
 include("diffusion.jl")

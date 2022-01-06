@@ -144,7 +144,7 @@ function advective_timescale(vel_layers, grid_spacing::Tuple{T,T,AbstractArray{T
 end
 
 function set_advection!(rhs, vel, df::DerivativeFactors, ht::HorizontalTransform,
-        lower_bcs::Tuple, upper_bcs::Tuple, b::AdvectionBuffers)
+        lower_bcs::Tuple, upper_bcs::Tuple, log::Union{FlowLog, Nothing}, b::AdvectionBuffers)
 
     # compute vorticity in frequency domain
     set_vorticity!(b.rot_fd, vel, lower_bcs, upper_bcs, df)

@@ -160,7 +160,7 @@ RoughWallEquilibriumModel(; z0 = 1e-3, kappa = 0.4) = RoughWallEquilibriumModel(
 
 function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransform,
         lower_bcs::NTuple{3,BoundaryCondition{P,T}}, upper_bcs::NTuple{3,BoundaryCondition{P,T}},
-        b::FilteredAdvectionBuffers{T, P}) where {P, T}
+        log::Union{FlowLog, Nothing}, b::FilteredAdvectionBuffers{T, P}) where {P, T}
 
     # Compute ui, dui/dx1, dui/dx2 and transform to PD (9 terms).
     get_field!.(b.vel, ht, vel, staggered_nodes())

@@ -47,7 +47,7 @@ function test_advection_exact(NZ)
         CF.set_field!(u, u0, gd, gm, ht, CF.NodeSet(:H))
         v .= 0
         w .= 0
-        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
+        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, nothing, b)
         CF.set_field!(advh, (x,y,z) -> du0(x,y,z) * u0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[1] .+ 1 ≈ ones(eltype(u), size(u))
         if Nk == 6
@@ -68,7 +68,7 @@ function test_advection_exact(NZ)
         CF.set_field!(v, v0, gd, gm, ht, CF.NodeSet(:H))
         u .= 0
         w .= 0
-        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
+        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, nothing, b)
         CF.set_field!(advh, (x,y,z) -> dv0(x,y,z) * v0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         if Nk == 5
             @test rhs[1] ≈ advh
@@ -88,7 +88,7 @@ function test_advection_exact(NZ)
         CF.set_field!(w, w0, gd, gm, ht, CF.NodeSet(:V))
         u .= 0
         v .= 0
-        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
+        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, nothing, b)
         CF.set_field!(advh, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[2] .+ 1 ≈ ones(eltype(u), size(u))
         @test rhs[3] .+ 1 ≈ ones(eltype(w), size(w))
@@ -110,7 +110,7 @@ function test_advection_exact(NZ)
         CF.set_field!(w, w0, gd, gm, ht, CF.NodeSet(:V))
         u .= 0
         v .= 0
-        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, b)
+        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, nothing, b)
         CF.set_field!(advh, (x,y,z) -> dw0(x,y,z) * w0(x,y,z), gd, gm, ht, CF.NodeSet(:H))
         @test rhs[1] .+ 1 ≈ ones(eltype(u), size(u))
         @test rhs[3] .+ 1 ≈ ones(eltype(w), size(w))
@@ -185,7 +185,7 @@ function advection_error_convergence(Nh, Nv)
         CF.set_field!(vel[1], u0, gd, gm, ht, CF.NodeSet(:H))
         CF.set_field!(vel[2], v0, gd, gm, ht, CF.NodeSet(:H))
         CF.set_field!(vel[3], w0, gd, gm, ht, CF.NodeSet(:V))
-        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, ab)
+        CF.set_advection!(rhs, vel, df, ht, lbcs, ubcs, nothing, ab)
 
         CF.set_field!(adv[1], advx, gd, gm, ht, CF.NodeSet(:H))
         CF.set_field!(adv[2], advy, gd, gm, ht, CF.NodeSet(:H))

@@ -16,7 +16,7 @@ function test_closed_channel_les(n)
 
     # compute advection term for constant velocity
     CF.set_advection!(cfp.rhs, cfp.velocity, cfp.derivatives, cfp.transform,
-                      cfp.lower_bcs, cfp.upper_bcs, cfp.advection_buffers)
+                      cfp.lower_bcs, cfp.upper_bcs, nothing, cfp.advection_buffers)
 
     # check that advective stress is equal to wall stress from wall model
     utot = sqrt(u1^2+u2^2)
@@ -31,7 +31,7 @@ function test_closed_channel_les(n)
     cfp.velocity[2] .= 0
     cfp.velocity[3] .= 0
     CF.set_advection!(cfp.rhs, cfp.velocity, cfp.derivatives, cfp.transform,
-                      cfp.lower_bcs, cfp.upper_bcs, cfp.advection_buffers)
+                      cfp.lower_bcs, cfp.upper_bcs, nothing, cfp.advection_buffers)
 
     # check that eddy viscosity is correct
     S13 = S31 = 1/2 * (dudz + 0) # dw/dx == 0

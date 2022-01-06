@@ -218,28 +218,33 @@ function integrate!(cf::ChannelFlowProblem{P,T}, tspan;
             cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_frequency)
     stats = MeanStatistics(T, cf.grid, profiles_dir, profiles_frequency,
             profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
+    log::FlowLog{P,T} = FlowLog(T, cf.grid,
+            profiles_frequency == 0 ? [] : (dt * profiles_frequency):(dt * profiles_frequency):t2,
+            profiles_dir)
 
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)
 
-    log = (state, tstep, t) -> begin
-        TimerOutputs.@timeit to "output" begin
-            TimerOutputs.@timeit to "flow statistics" log_statistics!(stats, state.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
-            TimerOutputs.@timeit to "snapshots" log_state!(oc, state.x, t, (dt, dt_adv, dt_dif), verbose)
-        end
-    end
-
     tstep = 0
     rate! = (du, u, t; checkpoint = false) -> begin
-        if checkpoint
+
+        # log state with old type of logging
+        TimerOutputs.@timeit to "output" if checkpoint
+            TimerOutputs.@timeit to "flow statistics" log_statistics!(stats,
+                u.x, cf.lower_bcs, cf.upper_bcs, cf.derivatives, t, tstep)
+            TimerOutputs.@timeit to "snapshots" log_state!(oc,
+                u.x, t, (dt, dt_adv, dt_dif), verbose)
             tstep += 1
-            log(u, tstep, t)
         end
+
         TimerOutputs.@timeit to "advection" _, dt_adv = set_advection!(du.x, u.x,
-            cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs, cf.advection_buffers)
+            cf.derivatives, cf.transform, cf.lower_bcs, cf.upper_bcs,
+            checkpoint ? log : nothing, cf.advection_buffers)
         TimerOutputs.@timeit to "diffusion" _, dt_dif = add_diffusion!(du.x, u.x,
             cf.lower_bcs, cf.upper_bcs, cf.diffusion_coeff, cf.derivatives)
         cf.constant_flux || add_forcing!(du.x, cf.forcing)
+
+        TimerOutputs.@timeit to "logging (new)" checkpoint && process_logs!(log, t)
     end
 
     projection! = (u) -> begin
@@ -253,8 +258,8 @@ function integrate!(cf::ChannelFlowProblem{P,T}, tspan;
     # initialize integrator and perform one step to compile functions
     TimerOutputs.@timeit to "initialization" begin
         u0 = RecursiveArrayTools.ArrayPartition(cf.velocity...)
-        prob = TimeIntegrationProblem(rate!, projection!, u0, (t1, t2))
-        log(prob.u, 0, t1)
+        prob = TimeIntegrationProblem(rate!, projection!, u0, (t1, t2), checkpoint = true)
+        reset!(log, t1) # removes samples from initial state and sets correct start time
     end
 
     # perform the full integration
