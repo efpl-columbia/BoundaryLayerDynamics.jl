@@ -1,56 +1,34 @@
 abstract type TimeIntegrationAlgorithm end
 
 """
-    Euler(; dt)
+    Euler()
 
-First-order forward Euler time integration with constant time step `dt`.
+First-order forward Euler time integration.
 """
-struct Euler <: TimeIntegrationAlgorithm
-    constant_dt::Real
-    Euler(; dt = nothing) = isnothing(dt) ?
-        error("Time integration method requires specifying a fixed time step size") :
-        new(dt)
-end
+struct Euler <: TimeIntegrationAlgorithm end
 
 """
-    AB2(; dt)
+    AB2()
 
-Second-order Adams-Bashforth time integration with constant time step `dt`.
+Second-order Adams-Bashforth time integration.
 """
-struct AB2 <: TimeIntegrationAlgorithm
-    constant_dt::Real
-    AB2(; dt = nothing) = isnothing(dt) ?
-        error("Time integration method requires specifying a fixed time step size") :
-        new(dt)
-end
+struct AB2 <: TimeIntegrationAlgorithm end
 
 """
-    SSPRK22(; dt)
+    SSPRK22()
 
 Two-stage second-order strong-stability-preserving Runge-Kutta time
-integration with constant time step `dt`.
+integration.
 """
-struct SSPRK22 <: TimeIntegrationAlgorithm
-    constant_dt::Real
-    SSPRK22(; dt = nothing) = isnothing(dt) ?
-        error("Time integration method requires specifying a fixed time step size") :
-        new(dt)
-end
+struct SSPRK22 <: TimeIntegrationAlgorithm end
 
 """
-    SSPRK33(; dt)
+    SSPRK33()
 
 Three-stage third-order strong-stability-preserving Runge-Kutta time
-integration with constant time step `dt`.
+integration.
 """
-struct SSPRK33 <: TimeIntegrationAlgorithm
-    constant_dt::Real
-    SSPRK33(; dt = nothing) = isnothing(dt) ?
-        error("Time integration method requires specifying a fixed time step size") :
-        new(dt)
-end
-
-timestep(alg::TimeIntegrationAlgorithm) = alg.constant_dt
+struct SSPRK33 <: TimeIntegrationAlgorithm end
 
 abstract type TimeIntegrationCache{T} end
 
@@ -160,13 +138,13 @@ function perform_step!(problem, dt, c::SSPRK33Cache)
     problem.projection!(problem.u)
 end
 
-struct TimeIntegrationProblem{T,R,P}
+struct TimeIntegrationProblem{Tt,Tu,R,P}
     rate!::R
     projection!::P
-    u::T
-    du::T
-    t::Ref{Float64}
-    tmax::Float64
+    u::Tu
+    du::Tu
+    t::Ref{Tt}
+    tmax::Tt
 end
 
 TimeIntegrationProblem(rate!, u0, tspan; kwargs...) =
@@ -182,11 +160,11 @@ end
 time(prob::TimeIntegrationProblem) = prob.t[]
 state(prob::TimeIntegrationProblem) = prob.u
 
-function solve(prob::TimeIntegrationProblem,
-               alg::TimeIntegrationAlgorithm;
-               checkpoints::Union{Int,Nothing} = nothing)
+function solve!(prob::TimeIntegrationProblem{Tt},
+        alg::TimeIntegrationAlgorithm,
+        dt::Tt;
+        checkpoints::Union{Int,Nothing} = nothing) where {Tt}
     cache = init_cache(prob, alg)
-    dt = timestep(alg)
     nt_float = (prob.tmax - prob.t[]) / dt
     nt = round(Int, nt_float)
     nt ≈ nt_float || error("Integration time not divisible by (constant) time step.")

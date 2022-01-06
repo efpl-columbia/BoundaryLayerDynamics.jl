@@ -197,7 +197,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
         snapshot_steps::Array{Int,1}=Int[], snapshot_dir = joinpath(pwd(), "snapshots"),
         output_frequency = max(1, round(Int, nt / 100)),
         profiles_dir = joinpath(pwd(), "profiles"), profiles_frequency = 0,
-        method = SSPRK33(dt=dt), verbose=true) where {P,T}
+        method = SSPRK33(), verbose=true) where {P,T}
 
     to = TimerOutputs.get_defaulttimer()
     oc = OutputCache(cf.grid, cf.mapping, dt, nt, cf.lower_bcs, cf.upper_bcs,
@@ -243,7 +243,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     end
 
     # perform the full integration
-    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, checkpoints=1)
+    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, dt, checkpoints=1)
     for i=1:3
         cf.velocity[i] .= sol.x[i]
     end

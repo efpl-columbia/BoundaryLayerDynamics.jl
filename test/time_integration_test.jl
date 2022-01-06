@@ -28,7 +28,7 @@ function test_constant_growth(alg)
     t = (0.0, 1.0)
     prob = CF.TimeIntegrationProblem(rate!, u0, t)
     dt = 1e-2
-    CF.solve(prob, alg(dt=dt))
+    CF.solve!(prob, alg(), dt)
     @test CF.time(prob) ≈ 1.0
     @test CF.state(prob) ≈ [1.0]
 end
@@ -45,7 +45,7 @@ function test_projection(alg)
     t = (0.0, 1.0)
     prob = CF.TimeIntegrationProblem(rate!, projection!, u0, t)
     dt = 1/8
-    CF.solve(prob, alg(dt=dt))
+    CF.solve!(prob, alg(), dt)
     @test CF.state(prob) ≈ [1.0]
 end
 
@@ -53,7 +53,7 @@ function ode_error(ode, alg, nt)
     dt = ode.T[end]/nt
     u0 = ode.uref(ode.T[1])
     prob = CF.TimeIntegrationProblem(ode.rate!, u0, ode.T)
-    CF.solve(prob, alg(dt=dt))
+    CF.solve!(prob, alg(), dt)
     sqrt(sum(abs2.(ode.uref(ode.T[end]) .- CF.state(prob)))) # error
 end
 
@@ -76,13 +76,13 @@ function test_checkpoints(alg)
         empty!(times)
         prob = CF.TimeIntegrationProblem(rate!, [0.0], t)
         if checkpoints == nothing
-            CF.solve(prob, alg(dt=dt), checkpoints = checkpoints)
+            CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
             @test times == []
         elseif nt % checkpoints == 0
-            CF.solve(prob, alg(dt=dt), checkpoints = checkpoints)
+            CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
             @test times ≈ [LinRange(checkpoints*dt, t[end], div(nt, checkpoints))...]
         else
-            @test_throws ErrorException CF.solve(prob, alg(dt=dt), checkpoints = checkpoints)
+            @test_throws ErrorException CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
         end
     end
 end
