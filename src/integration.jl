@@ -243,7 +243,7 @@ function integrate!(cf::ChannelFlowProblem{P,T}, dt, nt;
     end
 
     # perform the full integration
-    TimerOutputs.@timeit to "time stepping" sol = solve(prob, method, dt, checkpoints=1)
+    TimerOutputs.@timeit to "time stepping" sol = solve!(prob, method, dt, checkpoints=dt:dt:t2)
     for i=1:3
         cf.velocity[i] .= sol.x[i]
     end

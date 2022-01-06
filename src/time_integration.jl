@@ -163,10 +163,11 @@ end
 TimeIntegrationProblem(rate!, u0, tspan; kwargs...) =
     TimeIntegrationProblem(rate!, u -> u, u0, tspan; kwargs...)
 
-function TimeIntegrationProblem(rate!, projection!, u0, (t1, t2))
+function TimeIntegrationProblem(rate!, projection!, u0, (t1, t2); checkpoint = false)
+    t1 <= t2 || error("Integration start time is larger than end time")
     du = zero(u0)
     projection!(u0)
-    rate!(du, u0, t1)
+    rate!(du, u0, t1; (checkpoint ? (checkpoint = true,) : ())...)
     TimeIntegrationProblem(rate!, projection!, u0, du, Ref(t1), t2)
 end
 
@@ -183,25 +184,32 @@ integration and signaling them to the `rate!` function of the problem.
 function solve!(prob::TimeIntegrationProblem{Tt},
         alg::TimeIntegrationAlgorithm,
         dt::Tt;
-        checkpoints::Union{Int,Nothing} = nothing) where {Tt}
-    buffer = init_buffer(prob, alg)
-    nt_float = (prob.tmax - prob.t[]) / dt
-    nt = round(Int, nt_float)
-    nt ≈ nt_float || error("Integration time not divisible by (constant) time step.")
-    next_checkpoint = checkpoints
-    checkpoints == nothing || nt % checkpoints == 0 ||
-        error("Time steps not divisible by checkpoint frequency")
+        checkpoints = nothing) where {Tt}
 
-    for tstep in 1:nt
-        perform_step!(prob, dt, cache)
-        prob.t[] += dt
-        kwargs = if tstep == next_checkpoint
-            next_checkpoint += checkpoints
-            (checkpoint = true,)
-        else
-            ()
+    buffer = init_buffer(prob, alg)
+
+    # make sure that checkpoints are valid and in the right format
+    checkpoints = if isnothing(checkpoints)
+        (Inf, )
+    elseif minimum(checkpoints) <= prob.t[] || maximum(checkpoints) > prob.tmax
+        error("Checkpoints outside of time range")
+    else
+        sort(checkpoints)
+    end
+
+    for t in checkpoints
+        # compute number of steps to next checkpoint or end of simulation
+        nt = approxdiv(min(prob.tmax, t) - prob.t[], dt)
+
+        # perform steps (the order of these commands is important for correctness!)
+        for it in 1:nt
+            perform_step!(prob, dt, buffer)
+            # update time: make sure time matches exactly at checkpoints
+            prob.t[] = (prob.t[] + dt ≈ t) ? t : prob.t[] + dt
+            # notify `prob.rate!` if the last evaluation is at a checkpoint
+            kwargs = (it == nt && prob.t[] == t) ? (checkpoint = true,) : ()
+            prob.rate!(prob.du, prob.u, prob.t[]; kwargs...)
         end
-        prob.rate!(prob.du, prob.u, prob.t[]; kwargs...)
     end
     prob.u
 end

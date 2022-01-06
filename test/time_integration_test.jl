@@ -72,15 +72,15 @@ function test_checkpoints(alg)
     nt = 10
     dt = t[end] / nt
 
-    for checkpoints in (nothing, 1, 3, 5)
+    for checkpoints in (nothing, dt:dt:t[end], 5*dt:5*dt:t[end], 3*dt:3*dt:2*t[end])
         empty!(times)
         prob = CF.TimeIntegrationProblem(rate!, [0.0], t)
         if checkpoints == nothing
             CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
             @test times == []
-        elseif nt % checkpoints == 0
+        elseif maximum(checkpoints) <= t[end]
             CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
-            @test times ≈ [LinRange(checkpoints*dt, t[end], div(nt, checkpoints))...]
+            @test times ≈ collect(checkpoints)
         else
             @test_throws ErrorException CF.solve!(prob, alg(), dt, checkpoints = checkpoints)
         end
