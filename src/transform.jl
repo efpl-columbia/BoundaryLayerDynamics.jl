@@ -1,8 +1,8 @@
 SupportedReals = Union{Float32,Float64}
 
 struct NodeSet{NS}
-    NodeSet(ns::Symbol) = ns == :H ? new{:H}() : ns == :V ? new{:V}() :
-        error("Invalid NodeSet: $(NS) (only :H and :V are allowed)")
+    NodeSet(ns::Symbol) = ns in (:H, :V, :Iext) ? new{ns}() :
+        error("Invalid NodeSet: $(NS) (only :H, :V, and :Iext are allowed)")
 end
 
 staggered_nodes() = (NodeSet(:H), NodeSet(:H), NodeSet(:V))
@@ -95,6 +95,8 @@ end
 # create new fields initialized to zero
 get_nz(gd::DistributedGrid, ns::NodeSet{:H}) = gd.nz_h
 get_nz(gd::DistributedGrid, ns::NodeSet{:V}) = gd.nz_v
+get_nz(gd::DistributedGrid, ns::NodeSet{:Iext}) = gd.nz_v + (gd.iz_min == 1 ? 1 : 0) + (gd.iz_max == gd.nz_global ? 1 : 0)
+
 zeros_fd(::Type{T}, gd::DistributedGrid, ns::NodeSet) where T = zeros(Complex{T}, gd.nx_fd, gd.ny_fd, get_nz(gd, ns))
 zeros_pd(::Type{T}, gd::DistributedGrid, ns::NodeSet) where T = zeros(T, gd.nx_pd, gd.ny_pd, get_nz(gd, ns))
 zeros_fd(::Type{T}, gd, ns::Symbol) where T = zeros_fd(T, gd, NodeSet(ns))

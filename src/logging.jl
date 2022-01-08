@@ -19,6 +19,12 @@ end
 # compact definition of terms to save profiles of
 # with their corresponding node sets
 const profile_nodes = Dict(
+    :sgs13 => :Iext,
+    :sgs23 => :Iext,
+    :sgs11 => :H,
+    :sgs22 => :H,
+    :sgs33 => :H,
+    :sgs12 => :H,
 )
 
 function FlowLog(::Type{T}, gd::DistributedGrid, saveat, path, terms = []) where T
@@ -29,6 +35,29 @@ function FlowLog(::Type{T}, gd::DistributedGrid, saveat, path, terms = []) where
 end
 
 log!(::Nothing, _, _, _) = return
+
+Layer{T} = Union{AbstractArray{T, 2}, T}
+Layers{T,N} = NTuple{N, Layer{T}}
+
+function log!(log::FlowLog{P,T}, data::Layers{T,N}, key::Symbol, ::NodeSet{:Iext}) where {P, T, N}
+    haskey(log.mean_profiles, key) || return
+    skip = (P <: LowestProc) ? 0 : 1
+    profile, samples = log.mean_profiles[key]
+    samples[] += 1
+    for i3 = 1:length(profile)
+        profile[i3] += sum(data[i3+skip]) / prod(size(data[i3+skip]))
+    end
+end
+
+function log!(log::FlowLog{P,T}, data::AbstractArray{T}, key::Symbol, _) where {P, T, N}
+    haskey(log.mean_profiles, key) || return
+    nh = prod(size(data)[1:2])
+    profile, samples = log.mean_profiles[key]
+    samples[] += 1
+    for i3 = 1:length(profile)
+        profile[i3] += sum(data[:, :, i3]) / nh
+    end
+end
 
 function process_logs!(log::FlowLog, t)
 

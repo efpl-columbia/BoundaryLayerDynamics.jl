@@ -218,9 +218,11 @@ function integrate!(cf::ChannelFlowProblem{P,T}, tspan;
             cf.diffusion_coeff, snapshot_steps, snapshot_dir, output_frequency)
     stats = MeanStatistics(T, cf.grid, profiles_dir, profiles_frequency,
             profiles_frequency == 0 ? 0 : div(nt, profiles_frequency))
+    terms = cf.advection_buffers isa FilteredAdvectionBuffers ?
+        [:sgs11, :sgs12, :sgs13, :sgs22, :sgs23, :sgs33] : []
     log::FlowLog{P,T} = FlowLog(T, cf.grid,
             profiles_frequency == 0 ? [] : (dt * profiles_frequency):(dt * profiles_frequency):t2,
-            profiles_dir)
+            profiles_dir, terms)
 
     dt_adv = (zero(T), zero(T), zero(T))
     dt_dif = zero(T)

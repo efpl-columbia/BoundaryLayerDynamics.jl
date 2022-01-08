@@ -198,22 +198,28 @@ function set_advection!(adv, vel, df::DerivativeFactors{T}, ht::HorizontalTransf
     broadcast!(νT, b.eddy_viscosity_h, b.eddy_viscosity_h, b.sgs_model.length_scale_h)
     broadcast!(νT, b.eddy_viscosity_v, b.eddy_viscosity_v, b.sgs_model.length_scale_v)
 
-    # Compute τij in PD.
+    # Compute τij in PD and save profiles of terms on H-nodes.
     @. b.sgs[1][1] = 2 * b.eddy_viscosity_h * b.strain_rate[1][1]
     @. b.sgs[2][2] = 2 * b.eddy_viscosity_h * b.strain_rate[2][2]
     @. b.sgs[3][3] = 2 * b.eddy_viscosity_h * b.strain_rate[3][3]
     @. b.sgs[1][2] = 2 * b.eddy_viscosity_h * b.strain_rate[1][2]
     @. b.sgs[3][1] = 2 * b.eddy_viscosity_v * b.strain_rate[3][1]
     @. b.sgs[2][3] = 2 * b.eddy_viscosity_v * b.strain_rate[2][3]
+    log!(log, b.sgs[1][1], :sgs11, NodeSet(:H))
+    log!(log, b.sgs[2][2], :sgs22, NodeSet(:H))
+    log!(log, b.sgs[3][3], :sgs33, NodeSet(:H))
+    log!(log, b.sgs[1][2], :sgs12, NodeSet(:H))
 
     # Add values of dτi3/dx3 to the resolved part of the non-linear term.
     τ13 = layers_expand_i_to_c(b.sgs[1][3], b.sgs_bcs[1], b.sgs_bcs[2])
     τ13 = apply_wall_model(τ13, lower_bcs[1], b.vel[1], upper_bcs[1], b.vel)
+    log!(log, τ13, :sgs13, NodeSet(:Iext)) # include BCs in profiles
     for i=1:equivalently(size(b.adv[1], 3), length(τ13)-1)
         add_derivative!(view(b.adv[1], :, :, i), τ13[i:i+1], df.D3_h[i]) # τ13 can be from wall model
     end
     τ23 = layers_expand_i_to_c(b.sgs[2][3], b.sgs_bcs[3], b.sgs_bcs[4])
     τ23 = apply_wall_model(τ23, lower_bcs[2], b.vel[2], upper_bcs[2], b.vel)
+    log!(log, τ23, :sgs23, NodeSet(:Iext)) # include BCs in profiles
     for i=1:equivalently(size(b.adv[2], 3), length(τ23)-1)
         add_derivative!(view(b.adv[2], :, :, i), τ23[i:i+1], df.D3_h[i]) # τ23 can be from wall model
     end
