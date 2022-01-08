@@ -158,10 +158,10 @@ function Test.record(ts::MPITestSet, t::Test.Result)
                     "\n")
             printstyled(summary; color=Base.error_color())
         end
+        push!(ts.fail_ranks,  sum(errids .== 1))
+        push!(ts.error_ranks, sum(errids .== 2))
+        push!(ts.results, t)
     end
-    push!(ts.results, t)
-    push!(ts.fail_ranks,  sum(errids .== 1))
-    push!(ts.error_ranks, sum(errids .== 2))
     MPI.Barrier(MPI.COMM_WORLD)
 end
 

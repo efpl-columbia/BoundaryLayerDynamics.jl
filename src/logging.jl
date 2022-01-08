@@ -12,7 +12,7 @@ struct FlowLog{P<:ProcType, T<:SupportedReals}
 
     FlowLog(::Type{T}, terms, saveat, path) where {T} = new{proc_type(),T}(
         Dict(k => (zeros(T, n), Ref(0)) for (k, n) in terms),
-        [t => joinpath(path * Printf.@sprintf("profiles-%03d.h5", i-1)) for (i, t) in enumerate(sort(saveat))],
+        [t => joinpath(path, Printf.@sprintf("profiles-%03d.h5", i-1)) for (i, t) in enumerate(sort(saveat))],
         Ref(0), Ref(zero(T)))
 end
 
@@ -64,7 +64,7 @@ end
 function reset!(log::FlowLog, t)
     log.samples[] = 0
     log.start[] = t
-    for (p, n) in log.mean_profiles
+    for (p, n) in values(log.mean_profiles)
         n[] = 0
         p .= 0
     end
@@ -76,19 +76,19 @@ gather_profile(::Type{SingleProc}, profile) = profile
 function gather_profile(::Type{MinProc}, profile)
     counts = MPI.Gather(Cint[length(profile)], 0, MPI.COMM_WORLD)
     global_profile = zeros(eltype(profile), sum(counts))
-    Gatherv!(profile, VBuffer(global_profile, counts), 0, MPI.COMM_WORLD)
+    MPI.Gatherv!(profile, MPI.VBuffer(global_profile, counts), 0, MPI.COMM_WORLD)
     global_profile
 end
 function gather_profile(::Type{P}, profile) where {P<:ProcType}
     MPI.Gather(Cint[length(profile)], 0, MPI.COMM_WORLD)
-    Gatherv!(profile, nothing, 0, MPI.COMM_WORLD)
+    MPI.Gatherv!(profile, nothing, 0, MPI.COMM_WORLD)
     nothing
 end
 
-function gather_profiles(::Type{P}, profiles::Dict{Symbol,A}) where {P<:ProcType, A}
-    global_profiles = Dict{Symbol, (P<:LowestProc) ? A : Nothing}()
+function gather_profiles(::Type{P}, profiles::Dict) where {P<:ProcType}
+    global_profiles = Dict()
     for k in sort!(collect(keys(profiles))) # MPI ranks must have same order
-        profile, _ = profiles[k]
+        profile, samples = profiles[k]
         global_profiles[k] = gather_profile(P, profile)
     end
     global_profiles
@@ -96,12 +96,14 @@ end
 
 function write_profiles(fn, profiles, metadata)
     isfile(fn) && error("File `$fn` already exists")
+    samples::Int = metadata["samples"]
     HDF5.h5open(fn, "w") do h5
         for (k, v) in metadata
             HDF5.write_attribute(h5, k, v)
         end
         for (k, v) in profiles
-            HDF5.write_dataset(fn, string(k), v)
+            v ./= samples
+            HDF5.write_dataset(h5, string(k), v)
         end
     end
 end

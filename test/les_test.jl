@@ -49,7 +49,7 @@ function test_closed_channel_les(n)
     @test global_vector(cfp.rhs[2][1,1,:]) .+ 1 ≈ ones(n)
     @test global_vector(cfp.rhs[3][1,1,:]) ≈ dudz * (LinRange(-1,1,n+1)[2:end-1] * dudz) # −(ω1u2 − ω2u1) = (∂₃u₁ − ∂₁u₃) u₁ = (∂₃u₁) u₁
 
-    # check thar integration runs without error
+    # check that integration runs without error
     dt = 1e-3
     nt = 10
     integrate!(cfp, dt * nt, dt = dt, verbose = false)
@@ -72,7 +72,7 @@ function test_open_channel_les(n)
                              sgs_model = StaticSmagorinskyModel())
     set_velocity!(cfp, ic)
 
-    # check thar integration runs without error
+    # check that integration runs without error
     dt = 1e-3
     nt = 10
     integrate!(cfp, dt * nt, dt = dt, verbose = false)
