@@ -1,5 +1,5 @@
 using ChannelFlow, Test
-import LinearAlgebra, Random, MPI, TimerOutputs
+import LinearAlgebra, Random, MPI, HDF5, TimerOutputs
 include("test_utils.jl")
 
 const CF = ChannelFlow
@@ -15,6 +15,7 @@ show_output && println("Testing ChannelFlow.jl... (parallel, n=", MPI.Comm_size(
     TimerOutputs.@timeit to "diffusion test" include("diffusion_test.jl")
     TimerOutputs.@timeit to "pressure test" include("pressure_solver_test.jl")
     TimerOutputs.@timeit to "output test" include("output_test.jl")
+    TimerOutputs.@timeit to "output (new) test" include("logging_test.jl")
     TimerOutputs.@timeit to "integration test" include("integration_test.jl")
     TimerOutputs.@timeit to "les test" include("les_test.jl")
     show_output && (show(to); println())
