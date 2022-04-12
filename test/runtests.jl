@@ -1,24 +1,30 @@
-using ChannelFlow, Test
-import LinearAlgebra, Random, MPI, HDF5, TimerOutputs
+using ABL, Test
+
+using MPI: MPI
+using TimerOutputs: @timeit, print_timer
 include("test_utils.jl")
 
-const CF = ChannelFlow # shorthand for convenience, since we use a lot of unexported functions in tests
-const to = TimerOutputs.TimerOutput()
+# use command-line argument to launch in MPI mode or not
+const parallel = "--mpi" in ARGS
+parallel && MPI.Init()
+const nproc = parallel ? MPI.Comm_size(MPI.COMM_WORLD) : 1
+const show_output = parallel ? MPI.Comm_rank(MPI.COMM_WORLD) == 0 : true
+show_output && println("Testing ABL.jl... ($(nproc == 1 ? "single process" : "$nproc processes"))")
 
-# TODO: use ARGS to decide which test sets should be added & run
+# allow selecting individual tests through command-line arguments
 # (starting Julia 1.3, these can be passed using Pkg.test(..., test_args=``))
-println("Testing ChannelFlow.jl... (serial)")
-@testset "Direct Numerical Simulation" begin
-    TimerOutputs.@timeit to "transform test" @testset "Basics & Transform" begin include("transform_test.jl") end
-    TimerOutputs.@timeit to "advection test" @testset "Advection Term" begin include("advection_test.jl") end
-    TimerOutputs.@timeit to "diffusion test" @testset "Diffusion Term" begin include("diffusion_test.jl") end
-    TimerOutputs.@timeit to "pressure test" @testset "Pressure Solver" begin include("pressure_solver_test.jl") end
-    TimerOutputs.@timeit to "output test" @testset "File I/O" begin include("output_test.jl") end
-    TimerOutputs.@timeit to "output (new) test" @testset "New Profile Output" begin include("logging_test.jl") end
-    TimerOutputs.@timeit to "time integration test" @testset "Time Integration" begin include("time_integration_test.jl") end
-    TimerOutputs.@timeit to "integration test" @testset "Laminar 2D Flows" begin include("integration_test.jl") end
-    TimerOutputs.@timeit to "les test" @testset "Large-Eddy Simulation" begin include("les_test.jl") end
-    show(to); println() # TimerOutput has no newline at the end
+tests = ["grid", "transform", "diffusion", "abl"]
+selection = filter(a -> !startswith(a, '-'), ARGS)
+if !isempty(selection) && selection != ["all"]
+    filter!(t -> t in selection, tests)
 end
 
-run_mpi_test("runtests_mpi.jl", 4)
+@timeit "ABL.jl Tests" @testset MPITestSet "Atmospheric Boundary Layer Simulations" begin
+    for test in tests
+        include("$(test)_test.jl")
+    end
+end
+
+show_output && print_timer()
+parallel && MPI.Finalize()
+parallel || run_mpi_test("runtests.jl", 4, tests)

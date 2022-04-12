@@ -1,101 +1,72 @@
-function iz_range_from_neighbors(gd)
-    if MPI.Initialized()
-        c = MPI.COMM_WORLD
-        r, s = MPI.Comm_rank(c), MPI.Comm_size(c)
-        r < s-1 && MPI.Send(gd.iz_max, r+1, 1, c)
-        iz_min = (r == 0 ? 1 : MPI.Recv(Int, r-1, 1, c)[1] + 1)
-        r > 0 && MPI.Send(gd.iz_min, r-1, 2, c)
-        iz_max = (r == s-1 ? gd.nz_global : MPI.Recv(Int, r+1, 2, c)[1] - 1)
-        iz_min, iz_max
-    else
-        1, gd.nz_global
-    end
-end
-
-function test_grid_setup()
-    # even number of frequencies should be rounded down as Nyquist is removed
-    for dims in ((64, 32, 16), (63, 31, 16))
-        gd = ChannelFlow.DistributedGrid(dims...)
-        @test gd.nx_fd == 32
-        @test gd.nx_pd == 96
-        @test gd.ny_fd == 31
-        @test gd.ny_pd == 48
-        @test gd.nz_global == 16
-        @test global_sum(gd.nz_h) == 16
-        @test global_sum(gd.nz_v) == 15
-        @test (gd.iz_min, gd.iz_max) == iz_range_from_neighbors(gd)
-    end
-end
-
 function test_transform_constant()
     gd, ht, uh, uv = setup_random_fields(Float64, 64, 32, 16)
-    gm = CF.GridMapping(3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
-    CF.set_field!(uh, (x,y,z)->1, gd, gm, ht, CF.NodeSet(:H))
-    CF.set_field!(uv, (x,y,z)->2, gd, gm, ht, CF.NodeSet(:V))
-    @test uh[1,1,:] ≈ 1 * ones(gd.nz_h)
-    @test uv[1,1,:] ≈ 2 * ones(gd.nz_v)
-    @test uh[2:end,1,:] ≈ zeros(31,gd.nz_h)
-    @test uv[2:end,1,:] ≈ zeros(31,gd.nz_v)
-    @test uh[:,2:end,:] ≈ zeros(32,30,gd.nz_h)
-    @test uv[:,2:end,:] ≈ zeros(32,30,gd.nz_v)
-    uh_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:H))
-    uv_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:V))
-    CF.get_field!(uh_pd, ht, uh, CF.NodeSet(:H))
-    CF.get_field!(uv_pd, ht, uv, CF.NodeSet(:V))
-    @test uh_pd ≈ 1 * ones(gd.nx_pd, gd.ny_pd, gd.nz_h)
-    @test uv_pd ≈ 2 * ones(gd.nx_pd, gd.ny_pd, gd.nz_v)
+    ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
+    domain = ABL.SemiperiodicDomain(ds, nothing, nothing)
+    ABL.set_field!((x,y,z)->1, uh, ht, domain, gd, ABL.NodeSet(:C))
+    ABL.set_field!((x,y,z)->2, uv, ht, domain, gd, ABL.NodeSet(:I))
+    @test uh[1,1,:] ≈ 1 * ones(gd.n3c)
+    @test uv[1,1,:] ≈ 2 * ones(gd.n3i)
+    @test uh[2:end,1,:] ≈ zeros(31,gd.n3c)
+    @test uv[2:end,1,:] ≈ zeros(31,gd.n3i)
+    @test uh[:,2:end,:] ≈ zeros(32,30,gd.n3c)
+    @test uv[:,2:end,:] ≈ zeros(32,30,gd.n3i)
+    uh_pd = ABL.get_field(ht, uh)
+    uv_pd = ABL.get_field(ht, uv)
+    npd = ABL.default_size(gd)
+    @test uh_pd ≈ 1 * ones(npd..., gd.n3c)
+    @test uv_pd ≈ 2 * ones(npd..., gd.n3i)
 end
 
 function test_transform_horizontally_varying()
     gd, ht, uh, uv = setup_random_fields(Float64, 16, 16, 16)
-    gm = CF.GridMapping(3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
+    ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
+    domain = ABL.SemiperiodicDomain(ds, nothing, nothing)
     k = -7:8
     ax = [rand() for k=k]
     ay = [rand() for k=k]
-    u0(x,y,z) = sum(ax .* [cos(2*π*k*x/gm.hsize1) for k=k]) +
-                sum(ay .* [cos(2*π*k*y/gm.hsize2) for k=k])
-    u0n(x,y,z) = sum((ax .* [cos(2*π*k*x/gm.hsize1) for k=k])[1:end-1]) +
-                 sum((ay .* [cos(2*π*k*y/gm.hsize2) for k=k])[1:end-1])
-    CF.set_field!(uh, u0, gd, gm, ht, CF.NodeSet(:H))
-    @test uh[1,1,:] ≈ (ax[8] + ay[8]) .* ones(gd.nz_h)
-    @test uh[2:end,1,:] ≈ (ax[9:end-1] + ax[7:-1:1]) / 2 .* ones(1,gd.nz_h)
-    @test uh[1,2:8,:] ≈ (ay[9:end-1] + ay[7:-1:1]) / 2 .* ones(1,gd.nz_h)
-    @test uh[1,end:-1:9,:] ≈ (ay[9:end-1] + ay[7:-1:1]) / 2 .* ones(1,gd.nz_h)
+    u0(x,y,z) = sum(ax .* [cos(2*π*k*x/domain.hsize[1]) for k=k]) +
+                sum(ay .* [cos(2*π*k*y/domain.hsize[2]) for k=k])
+    u0n(x,y,z) = sum((ax .* [cos(2*π*k*x/domain.hsize[1]) for k=k])[1:end-1]) +
+                 sum((ay .* [cos(2*π*k*y/domain.hsize[2]) for k=k])[1:end-1])
+    ABL.set_field!(u0, uh, ht, domain, gd, ABL.NodeSet(:C))
+    @test uh[1,1,:] ≈ (ax[8] + ay[8]) .* ones(gd.n3c)
+    @test uh[2:end,1,:] ≈ (ax[9:end-1] + ax[7:-1:1]) / 2 .* ones(1,gd.n3c)
+    @test uh[1,2:8,:] ≈ (ay[9:end-1] + ay[7:-1:1]) / 2 .* ones(1,gd.n3c)
+    @test uh[1,end:-1:9,:] ≈ (ay[9:end-1] + ay[7:-1:1]) / 2 .* ones(1,gd.n3c)
     # do not compare almost-zero values directly with zero, since the algorithm
     # of “≈” checks for relative errors, which makes it too hard to pass “≈ 0”
-    @test uh[2:end,2:end,:] .+ 1 ≈ ones(gd.nx_fd-1, gd.ny_fd-1, gd.nz_h)
-    uh_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:H))
-    CF.get_field!(uh_pd, ht, uh, CF.NodeSet(:H))
-    @test uh_pd ≈ [u0n(x, y, z) for x=(0:size(uh_pd,1)-1)/size(uh_pd,1)*gm.hsize1,
-                                    y=(0:size(uh_pd,2)-1)/size(uh_pd,2)*gm.hsize2,
+    @test uh[2:end,2:end,:] .+ 1 ≈ ones(gd.k1max, 2*gd.k2max, gd.n3c)
+    uh_pd = ABL.get_field(ht, uh)
+    @test uh_pd ≈ [u0n(x, y, z) for x=(0:size(uh_pd,1)-1)/size(uh_pd,1)*domain.hsize[1],
+                                    y=(0:size(uh_pd,2)-1)/size(uh_pd,2)*domain.hsize[2],
                                     z=zeros(size(uh_pd,3))]
 end
 
 function test_transform_vertically_varying()
     gd, ht, uh, uv = setup_random_fields(Float64, 64, 32, 16)
     ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
-    gm = CF.GridMapping(ds...)
-    global_values_h = LinRange(0, ds[3], 2*gd.nz_global+1)[2:2:end-1]
-    global_values_v = LinRange(0, ds[3], 2*gd.nz_global+1)[3:2:end-2]
-    CF.set_field!(uh, (x,y,z)->z, gd, gm, ht, CF.NodeSet(:H))
-    CF.set_field!(uv, (x,y,z)->z, gd, gm, ht, CF.NodeSet(:V))
+    domain = ABL.SemiperiodicDomain(ds, nothing, nothing)
+    global_values_h = LinRange(0, ds[3], 2*gd.n3global+1)[2:2:end-1]
+    global_values_v = LinRange(0, ds[3], 2*gd.n3global+1)[3:2:end-2]
+    ABL.set_field!((x,y,z)->z, uh, ht, domain, gd, ABL.NodeSet(:C))
+    ABL.set_field!((x,y,z)->z, uv, ht, domain, gd, ABL.NodeSet(:I))
     @test global_vector(uh[1,1,:]) ≈ global_values_h
     @test global_vector(uv[1,1,:]) ≈ global_values_v
-    @test uh[2:end,1,:] ≈ zeros(31,gd.nz_h)
-    @test uv[2:end,1,:] ≈ zeros(31,gd.nz_v)
-    @test uh[:,2:end,:] ≈ zeros(32,30,gd.nz_h)
-    @test uv[:,2:end,:] ≈ zeros(32,30,gd.nz_v)
-    uh_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:H))
-    uv_pd = CF.zeros_pd(Float64, gd, CF.NodeSet(:V))
-    CF.get_field!(uh_pd, ht, uh, CF.NodeSet(:H))
-    CF.get_field!(uv_pd, ht, uv, CF.NodeSet(:V))
+    @test uh[2:end,1,:] ≈ zeros(31,gd.n3c)
+    @test uv[2:end,1,:] ≈ zeros(31,gd.n3i)
+    @test uh[:,2:end,:] ≈ zeros(32,30,gd.n3c)
+    @test uv[:,2:end,:] ≈ zeros(32,30,gd.n3i)
+    uh_pd = ABL.get_field(ht, uh)
+    uv_pd = ABL.get_field(ht, uv)
+    n1pd, n2pd = ABL.default_size(gd)
     @test global_vector(uh_pd[1,1,:]) ≈ global_values_h
     @test global_vector(uv_pd[1,1,:]) ≈ global_values_v
-    @test uh_pd ≈ uh_pd[1:1,1:1,:] .* ones(gd.nx_pd, gd.ny_pd, gd.nz_h)
-    @test uv_pd ≈ uv_pd[1:1,1:1,:] .* ones(gd.nx_pd, gd.ny_pd, gd.nz_v)
+    @test uh_pd ≈ uh_pd[1:1,1:1,:] .* ones(ABL.default_size(gd)..., gd.n3c)
+    @test uv_pd ≈ uv_pd[1:1,1:1,:] .* ones(ABL.default_size(gd)..., gd.n3i)
 end
 
-test_grid_setup()
-test_transform_constant()
-test_transform_horizontally_varying()
-test_transform_vertically_varying()
+@timeit "Transforms" @testset "Horizontal Transforms" begin
+    test_transform_constant()
+    test_transform_horizontally_varying()
+    test_transform_vertically_varying()
+end

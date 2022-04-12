@@ -1,4 +1,3 @@
-
 function test_diffusion(NZ)
 
     # some functions to test dirichlet & neumann boundary conditions
@@ -40,17 +39,24 @@ function test_diffusion(NZ)
 
     isample = (5, 7)
     xsample = (isample .- 1) ./ size[1:2] .* ds[1:2]
+    x3c = global_vector(coordinates(abl, :vel1, 3))
+    x3i = global_vector(coordinates(abl, :vel3, 3))
 
     # check 2nd derivative for C-nodes with Neumann BCs
     #@test global_vector(abl[:vel1][5,8,:]) ≈ ν * [Lu0n(2*π*4/18, 2*π*7/21, x3) for x3=coordinates(abl, :vel1, 3)]
     result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel1])
-    @test global_vector(result[isample...,:]) ≈ ν * [Lu0n(xsample..., x3) for x3=coordinates(abl, :vel1, 3)]
+    @test global_vector(result[isample...,:]) ≈ ν * [Lu0n(xsample..., x3) for x3=x3c]
 
     # check 2nd derivative for C-nodes with Dirichlet BCs
     result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel2])
-    @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=coordinates(abl, :vel2, 3)]
+    @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=x3c]
 
     # check 2nd derivative for I-nodes with Dirichlet BCs
     result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel3])
-    @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=coordinates(abl, :vel3, 3)]
+    @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=x3i]
+end
+
+@timeit "Diffusion" @testset "Molecular Diffusion" begin
+    test_diffusion(16)
+    MPI.Initialized() && test_diffusion(MPI.Comm_size(MPI.COMM_WORLD))
 end

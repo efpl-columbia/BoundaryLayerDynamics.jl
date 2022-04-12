@@ -39,15 +39,16 @@ DistributedGrid((nh, nv)::Tuple{Int,Int}; kwargs...) = DistributedGrid((nh, nh, 
 init_processes(comm::Nothing) = (comm, 1, 1)
 function init_processes(comm)
     count = MPI.Comm_size(comm)
-    comm = MPI.Cart_create(comm, [count], [false], true)
+    # TODO: change to new interface when updating MPI.jl
+    comm = MPI.Cart_create(comm, [count], [0], true)
     rank = MPI.Comm_rank(comm)
-    comm, 1 + rank, np
+    comm, 1 + rank, count
 end
 
 function neighbors(grid, displacement = 1)
     isnothing(grid.comm) && return (nothing, nothing)
     neighbors = MPI.Cart_shift(grid.comm, 0, displacement)
-    Tuple(n == MPI.Consts.MPI_PROC_NULL[] ? nothing : n for n in neighbors)
+    Tuple(n == MPI.MPI_PROC_NULL ? nothing : n for n in neighbors)
 end
 
 wavenumbers(gd, dim::Int) = wavenumbers(gd, Val(dim))

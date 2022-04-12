@@ -1,10 +1,10 @@
-function setup_random_fields(T, nx, ny, nz)
-    gd = CF.DistributedGrid(nx, ny, nz)
-    uh = CF.zeros_fd(T, gd, CF.NodeSet(:H))
-    uv = CF.zeros_fd(T, gd, CF.NodeSet(:V))
+function setup_random_fields(T, n1, n2, n3)
+    gd = ABL.DistributedGrid((n1, n2, n3))
+    uh = ABL.zeros(T, gd, ABL.NodeSet(:C))
+    uv = ABL.zeros(T, gd, ABL.NodeSet(:I))
     fill!(uh, rand(Complex{T}))
     fill!(uv, rand(Complex{T}))
-    ht = CF.HorizontalTransform(T, gd)
+    ht = ABL.Transform.HorizontalTransform(T, gd, ABL.Transform.default_size(gd))
     gd, ht, uh, uv
 end
 
@@ -57,14 +57,14 @@ function Base.showerror(io::IO, e::MPITestSetException)
     end
 end
 
-function run_mpi_test(file, nprocs::Integer)
+function run_mpi_test(file, nprocs::Integer, subset = [])
     juliabin = joinpath(Sys.BINDIR, Base.julia_exename())
     project = Base.active_project()
     path = joinpath(dirname(@__FILE__), file)
     pass = true
     try
         MPI.mpiexec() do cmd
-            run(`$cmd -n $(nprocs) $(juliabin) "--project=$(project)" $(path)`)
+            run(`$cmd -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $(join(subset, " "))`)
         end
     catch
         st = stacktrace()[2:end]
@@ -98,8 +98,13 @@ function show_all(var)
 end
 
 global_sum(x) = MPI.Initialized() ? MPI.Allreduce(x, +, MPI.COMM_WORLD) : x
-global_vector(x) = MPI.Initialized() ? MPI.Allgatherv(x, convert(Vector{Cint},
-        MPI.Allgather(length(x), MPI.COMM_WORLD)), MPI.COMM_WORLD) : x
+
+function global_vector(x)
+    x = collect(x)
+    MPI.Initialized() || return x
+    l = convert(Vector{Cint}, MPI.Allgather(length(x), MPI.COMM_WORLD))
+    MPI.Allgatherv(x, l, MPI.COMM_WORLD)
+end
 
 function mktempdir_parallel(f)
     MPI.Initialized() || return mktempdir(f)
@@ -119,24 +124,30 @@ struct MPITestSet <: Test.AbstractTestSet
     error_ranks::Vector{Int}
     mpi_rank::Integer
     mpi_size::Integer
-    # constructor takes a description string and options keyword arguments
-    MPITestSet(desc) = new(desc, [], [], [], MPI.Comm_rank(MPI.COMM_WORLD),
+    MPITestSet(desc, initialized) = new(desc, [], [], [], MPI.Comm_rank(MPI.COMM_WORLD),
             MPI.Comm_size(MPI.COMM_WORLD))
 end
+
+# constructor takes a description string and options keyword arguments
+MPITestSet(desc; kwargs...) = MPI.Initialized() ? MPITestSet(desc, true) :
+        Test.DefaultTestSet(desc; kwargs...)
 
 list_ranks(r) = length(r) == 1 ?
         string("rank ", r[1], " only") :
         string("ranks ", join(r[1:end-1], ", "), " & ", r[end])
 
-Test.record(ts::MPITestSet, child::Test.AbstractTestSet) =
-        push!(ts.results, child)
+function Test.record(ts::MPITestSet, child::Test.AbstractTestSet)
+    push!(ts.fail_ranks, sum(child.fail_ranks .!= 0))
+    push!(ts.error_ranks, sum(child.error_ranks .!= 0))
+    push!(ts.results, child)
+end
 
 function Test.record(ts::MPITestSet, t::Test.Result)
 
     # print error right away, in case only some processes encounter it
     if t isa Test.Error
-        print("Rank ", ts.mpi_rank, " encountered an error:")
-        print(t)
+        # TODO: do not simply skip errors
+        println("[Rank ", ts.mpi_rank, "] ", t)
     else
         # this code still has some references to errors, since we originally
         # had coordinated reporting errors between all processes. this leads
@@ -165,30 +176,55 @@ function Test.record(ts::MPITestSet, t::Test.Result)
     MPI.Barrier(MPI.COMM_WORLD)
 end
 
+function testresults(ts::MPITestSet)
+    total, passed = 0, 0
+    for (i,r) in enumerate(ts.results)
+        if r isa Test.Result
+            total += 1
+            passed += (ts.fail_ranks[i] == ts.error_ranks[i] == 0 ? 1 : 0)
+        else
+            t, p, = testresults(r)
+            total += t
+            passed += p
+        end
+    end
+    total, passed
+end
+
+function print_test_summary(ts::MPITestSet, prefix = "")
+    total, passed = testresults(ts)
+    print(ts.description, " (")
+    printstyled("$passed/$total passed", color = (total == passed ? :green : :red))
+    println(")")
+    total == passed && return
+    for (i,r) in enumerate(ts.results)
+        if r isa Test.Result
+            f = ts.fail_ranks[i]
+            e = ts.error_ranks[i]
+            if f > 0 || e > 0
+                println(prefix, "– Test ", i, ": ", ts.mpi_size-f-e, " Pass", ", ",
+                        f, " Fail", ", ", e, " Err")
+            end
+        elseif r isa MPITestSet
+            print(prefix, "• ")
+            print_test_summary(r, prefix*"  ")
+        end
+    end
+end
+
 function Test.finish(ts::MPITestSet)
 
     # just record if we're not the top-level parent
     if Test.get_testset_depth() > 0
-        record(Test.get_testset(), ts)
+        Test.record(Test.get_testset(), ts)
         return ts
     end
 
-    # TODO: support nested test sets
     MPI.Barrier(MPI.COMM_WORLD)
     if ts.mpi_rank == 0
-        println("Test Summary: ", ts.description, " (", length(ts.results),
-                " tests, ", ts.mpi_size, " MPI processes)")
-        for (i,t) in enumerate(ts.results)
-            f = ts.fail_ranks[i]
-            e = ts.error_ranks[i]
-            if t isa Test.Result && f > 0 || e > 0
-                println(" - Test ", i, ": ", ts.mpi_size-f-e, " Pass", ", ",
-                        f, " Fail", ", ", e, " Err")
-            end
-        end
-        if sum(ts.fail_ranks) + sum(ts.error_ranks) == 0
-            println(" -> all tests in set passed")
-        end
+        printstyled("Test Summary:", bold=true, color=:white)
+        println(" (", ts.mpi_size, " MPI process$(ts.mpi_size > 1 ? "es" : ""))")
+        print_test_summary(ts)
     end
 
     if sum(ts.fail_ranks) + sum(ts.error_ranks) > 0

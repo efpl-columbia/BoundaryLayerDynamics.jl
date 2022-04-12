@@ -1,13 +1,15 @@
 module BoundaryConditions
 
+using MPI: MPI
 using ..Domain: SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
 using ..Grid: fdsize, neighbors
 
 struct BoundaryCondition{BC,Nb,Na,C,A}
     type::BC
     buffer::A
-    neighbors::Tuple{Nb,Na}
     comm::C
+    BoundaryCondition(type::BC, buffer::A, comm::C, (Nb, Na)) where {BC,A,C} =
+        new{BC,Nb,Na,C,A}(type, buffer, comm)
 end
 
 struct ConstantValue{T}
@@ -26,7 +28,7 @@ const NeumannBC = BoundaryCondition{ConstantGradient}
 function BoundaryCondition(::Type{T}, type, grid) where T
     type = init_bctype(T, type)
     buffer = zeros(Complex{T}, fdsize(grid))
-    BoundaryCondition(type, buffer, neighbors(grid), grid.comm)
+    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
 end
 
 # set up physical domain boundary condition
@@ -69,18 +71,18 @@ layers(field::AbstractArray{T,3}) where T =
         Tuple(view(field, :, :, i3) for i3=1:size(field,3))
 
 # single process
-function layer_below(layers, lower_bc::BoundaryCondition{BC,Nothing,Nothing}) where {BC}
+function layer_below(layers, lower_bc::BoundaryCondition{BC,nothing,nothing}) where {BC}
     lower_bc.type
 end
 
 # lowest process
-function layer_below(layers, lower_bc::BoundaryCondition{BC,Nothing,Na}) where {BC,Na}
+function layer_below(layers, lower_bc::BoundaryCondition{BC,nothing,Na}) where {BC,Na}
     MPI.Send(layers[end], Na, MTAG_UP, lower_bc.comm)
     lower_bc.type
 end
 
 # highest process
-function layer_below(layers, lower_bc::BoundaryCondition{BC,Nb,Nothing}) where {BC,Nb}
+function layer_below(layers, lower_bc::BoundaryCondition{BC,Nb,nothing}) where {BC,Nb}
     MPI.Recv!(lower_bc.buffer, Nb, MTAG_UP, lower_bc.comm)
     lower_bc.buffer
 end
@@ -94,26 +96,40 @@ function layer_below(layers, lower_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb
 end
 
 # single process
-function layer_above(layers, upper_bc::BoundaryCondition{BC,Nothing,Nothing}) where {BC}
+function layer_above(layers, upper_bc::BoundaryCondition{BC,nothing,nothing}) where {BC}
     upper_bc.type
 end
 
 # lowest process
-function layer_above(layers, upper_bc::BoundaryCondition{BC,Nothing,Na}) where {BC,Na}
-    MPI.Recv!(upper_bc.buffer, Na, MTAG_DOWN, upper_bc.comm)
+function layer_above(layers, upper_bc::BoundaryCondition{BC,nothing,Na}) where {BC,Na}
+    MPI.Recv!(upper_bc.buffer, Na, MTAG_DN, upper_bc.comm)
     upper_bc.buffer
 end
 
 # highest process
-function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Nothing}) where {BC,Nb}
-    MPI.Send(layers[1], Nb, MTAG_DOWN, upper_bc.comm)
+function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,nothing}) where {BC,Nb}
+    MPI.Send(layers[1], Nb, MTAG_DN, upper_bc.comm)
     upper_bc.type
+end
+function layer_above(layers::Tuple{}, upper_bc::BoundaryCondition{ConstantValue{T},Nb,nothing}) where {T,Nb}
+    # this is a special case for when the top process does not have any layers,
+    # which is the case if there is only one layer per process. in this case, we
+    # fill the BC buffer with the boundary condition and pass that down to the
+    # process below
+    if eltype(upper_bc.buffer) <: Real
+        fill!(upper_bc.buffer, upper_bc.type.value)
+    else
+        fill!(upper_bc.buffer, 0)
+        upper_bc.buffer[1,1] = upper_bc.type.value
+    end
+    MPI.Send(upper_bc.buffer, Nb, MTAG_DN, upper_bc.comm)
+    nothing # prevent the caller from trying to use the return value
 end
 
 # inner process
-function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Nothing}) where {BC,Nb}
-    r = MPI.Irecv!(upper_bc.buffer, Na, MTAG_DOWN, upper_bc.comm)
-    MPI.Send(layers[1], Nb, MTAG_DOWN, upper_bc.comm)
+function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
+    r = MPI.Irecv!(upper_bc.buffer, Na, MTAG_DN, upper_bc.comm)
+    MPI.Send(layers[1], Nb, MTAG_DN, upper_bc.comm)
     MPI.Wait!(r)
     upper_bc.buffer
 end
