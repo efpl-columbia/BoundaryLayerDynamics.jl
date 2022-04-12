@@ -35,9 +35,9 @@ add_rate!(rate, process, state, t) = add_rate!(rate, process, state, t, nothing)
 
 state_fields(processes) = unique(vcat((f isa Tuple ? collect(f) : [f] for f in state_fields.(processes))...))
 
-include("momentum_advection.jl")
-include("molecular_diffusion.jl")
-include("pressure.jl")
-include("sources.jl")
+include("processes/momentum_advection.jl")
+include("processes/molecular_diffusion.jl")
+include("processes/pressure.jl")
+include("processes/sources.jl")
 
 end
