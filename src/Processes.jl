@@ -6,11 +6,11 @@ abstract type ProcessDefinition end
 abstract type DiscretizedProcess end
 
 using ..Helpers
-using ..Grids: NodeSet, nodes
-using ..Domains: AbstractDomain as Domain
-using ..BoundaryConditions: ConstantValue, ConstantGradient,
-                            init_bcs, layers, layer_below, layer_above, layers_expand_full
-using ..Derivatives: second_derivatives
+using ..Grids: NodeSet, nodes, neighbors, wavenumbers, vrange
+using ..Domains: AbstractDomain as Domain, scalefactor
+using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, init_bcs, internal_bc,
+                            layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
+using ..Derivatives: second_derivatives, dx1factors, dx2factors, dx3factors
 using ..PhysicalSpace: physical_domain!, pdsize
 
 function rate!(rate, state, t, processes, transforms, log = nothing)
@@ -25,7 +25,7 @@ function rate!(rate, state, t, processes, transforms, log = nothing)
 
     # add nonlinear terms in physical domain
     physical_domain!(rate, state, transforms) do rate, state
-        for process in filter(p -> !islinear(p), processes)
+        for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
             # TODO: select correct size for each term
             add_rate!(rate, process, state, t, log)
         end
@@ -34,6 +34,13 @@ end
 
 # allow computing rates without specifying log argument
 add_rate!(rate, process, state, t) = add_rate!(rate, process, state, t, nothing)
+
+function projection!(state, processes, log = nothing)
+    for process in filter(isprojection, processes)
+        apply_projection!(state, process)
+    end
+    state
+end
 
 function state_fields(processes)
     fields = []
@@ -66,6 +73,9 @@ physical_domain_rates(process) = ()
 
 # linear processes are defined by not having physical domain requirements
 islinear(process) = isempty(physical_domain_terms(process))
+
+# by default, processes are not assumed to be projections
+isprojection(process) = false
 
 include("processes/momentum_advection.jl")
 include("processes/molecular_diffusion.jl")

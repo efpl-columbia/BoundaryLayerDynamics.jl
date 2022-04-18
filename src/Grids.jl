@@ -48,9 +48,11 @@ function init_processes(comm)
     comm, 1 + rank, count
 end
 
-function neighbors(grid, displacement = 1)
-    isnothing(grid.comm) && return (nothing, nothing)
-    neighbors = MPI.Cart_shift(grid.comm, 0, displacement)
+neighbors(grid::StaggeredFourierGrid, displacement = 1) =
+    neighbors(grid.comm, displacement)
+function neighbors(comm, displacement = 1)
+    isnothing(comm) && return (nothing, nothing)
+    neighbors = MPI.Cart_shift(comm, 0, displacement)
     Tuple(n == MPI.MPI_PROC_NULL ? nothing : n for n in neighbors)
 end
 

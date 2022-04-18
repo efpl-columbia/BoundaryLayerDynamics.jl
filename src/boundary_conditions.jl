@@ -44,14 +44,14 @@ init_bctype(::Type{T}, type::Symbol) where T = init_bctype(T, Val(type), zero(T)
 init_bctype(::Type{T}, type::Pair) where T = init_bctype(T, Val(first(type)), convert(T, last(type)))
 init_bctype(::Type{T}, ::Val{:dirichlet}, value::T) where T = ConstantValue(value)
 init_bctype(::Type{T}, ::Val{:neumann}, gradient::T) where T = ConstantGradient(gradient)
-init_bctype(::Type{T}, ::Nothing) where T = Nothing
+init_bctype(::Type{T}, ::Nothing) where T = nothing
 
 
-function init_bcs(field, domain::Domain{T}, opts...) where T
+function init_bcs(field, domain::Domain{T}, grid::Grid, opts...) where T
     # options passed on to boundary condition allow for initializing both
     # frequency-space and physical-space boundary conditions
-    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), opts...)
-    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), opts...)
+    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), grid, opts...)
+    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), grid, opts...)
     (lbc, ubc)
 end
 
@@ -153,6 +153,18 @@ function layers_c2i(field::AbstractArray, bc_above::BoundaryCondition{BC,Nb,Na})
     field = layers(field)
     field_above = layer_above(field, bc_above)
     isnothing(Na) ? field : (field..., field_above)
+end
+
+"""
+This function takes a field defined on I-nodes, converts it into layers, and expands
+them through communication such that the list includes the layers just above and
+below all C-nodes. This means passing data up throughout the domain.
+"""
+function layers_i2c(field::AbstractArray{T}, bc_below::BoundaryCondition{BCb,Nb,Na},
+                        bc_above::BoundaryCondition{BCa,Nb,Na}) where {T,BCb,BCa,Nb,Na}
+    field = layers(field)
+    field_below = layer_below(field, bc_below)
+    isnothing(Na) ? (field_below, field..., bc_above.type) : (field_below, field...)
 end
 
 function layers_expand_full(field::AbstractArray,

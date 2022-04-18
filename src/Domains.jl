@@ -92,9 +92,16 @@ at most linearly transformed and will return an error otherwise.
 """
 function scalefactor(domain::ABLDomain, dim::Int)
     # TODO: support this for vertical directions if there is no transform in use
-    dim == 1 ? 1/domain.hsize1 : dim == 2 ? 1/domain.hsize2 :
+    dim == 1 ? 1/domain.hsize[1] : dim == 2 ? 1/domain.hsize[2] :
         error("Coordinates along dimension 3 might be transformed")
-    end
+end
+
+function scalefactor(domain::ABLDomain{T}, dim::Int, pos::Rational) where T
+    # factors are constant along horizontal dimensions
+    dim in (1, 2) && return scalefactor(domain, dim)
+    dim == 3 && return convert(T, 1/domain.Dvmap(pos))
+    error("Invalid dimension `$pos`")
+end
 
 struct RoughWall
     roughness

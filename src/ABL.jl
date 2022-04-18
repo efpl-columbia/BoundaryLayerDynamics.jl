@@ -8,7 +8,7 @@ export DiscretizedABL, incompressible_flow, initialize!, reset!, coordinates
 export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
 
 # physical processes
-export MolecularDiffusion, MomentumAdvection
+export MolecularDiffusion, MomentumAdvection, Pressure
 
 include("util.jl")
 include("Domains.jl")
@@ -57,6 +57,7 @@ function Base.show(io::IO, ::MIME"text/plain", abl::DiscretizedABL)
 end
 
 function initialize!(abl::DiscretizedABL; initial_conditions...)
+    # TODO: consider setting all other fields to zero
     for (field, ic) in initial_conditions
         set_field!(ic, abl.state[field], abl.physical_spaces[default_size(abl.grid)].transform,
                    abl.domain, abl.grid, nodes(field))
