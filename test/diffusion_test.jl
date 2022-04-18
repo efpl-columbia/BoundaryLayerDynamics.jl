@@ -21,13 +21,13 @@ function test_diffusion(NZ)
     ubc = CustomBoundary(vel1 = (:neumann => - 1.0 + rval),
                          vel2 = (:dirichlet => rval),
                          vel3 = (:dirichlet => rval))
-    domain = SemiperiodicDomain(ds, lbc, ubc)
+    domain = Domain(ds, lbc, ubc)
 
     # set up grid
-    size = (12, 14, NZ)
+    dims = (12, 14, NZ)
 
     # set up state & rhs
-    abl = DiscretizedABL(size, domain, diff)
+    abl = DiscretizedABL(dims, domain, diff)
     rhs = deepcopy(abl.state)
 
     # initialize values after resetting arrays with some arbitrary value
@@ -35,24 +35,24 @@ function test_diffusion(NZ)
     initialize!(abl, vel1 = u0n, vel2 = u0d, vel3 = u0d)
 
     # compute diffusion
-    ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.transforms)
+    ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
     isample = (5, 7)
-    xsample = (isample .- 1) ./ size[1:2] .* ds[1:2]
+    xsample = (isample .- 1) ./ dims[1:2] .* ds[1:2]
     x3c = global_vector(coordinates(abl, :vel1, 3))
     x3i = global_vector(coordinates(abl, :vel3, 3))
 
     # check 2nd derivative for C-nodes with Neumann BCs
     #@test global_vector(abl[:vel1][5,8,:]) ≈ ν * [Lu0n(2*π*4/18, 2*π*7/21, x3) for x3=coordinates(abl, :vel1, 3)]
-    result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel1])
+    result = ABL.PhysicalSpace.get_field(abl.physical_spaces[dims[1:2]].transform, rhs[:vel1])
     @test global_vector(result[isample...,:]) ≈ ν * [Lu0n(xsample..., x3) for x3=x3c]
 
     # check 2nd derivative for C-nodes with Dirichlet BCs
-    result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel2])
+    result = ABL.PhysicalSpace.get_field(abl.physical_spaces[dims[1:2]].transform, rhs[:vel2])
     @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=x3c]
 
     # check 2nd derivative for I-nodes with Dirichlet BCs
-    result = ABL.Transform.get_field(abl.transforms[size[1:2]], rhs[:vel3])
+    result = ABL.PhysicalSpace.get_field(abl.physical_spaces[dims[1:2]].transform, rhs[:vel3])
     @test global_vector(result[isample...,:]) ≈ ν * [Lu0d(xsample..., x3) for x3=x3i]
 end
 

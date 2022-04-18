@@ -13,10 +13,10 @@ struct DiscretizedMolecularDiffusion <: DiscretizedProcess
     nodes::NodeSet
 end
 
-function init_process(::Type{T}, diff::MolecularDiffusion, grid, domain) where T
+function init_process(diff::MolecularDiffusion, domain::Domain{T}, grid) where T
     ns = nodes(diff.field)
-    bcs = init_bcs(T, domain, grid, diff.field)
-    derivatives = second_derivatives(grid, domain, ns)
+    bcs = init_bcs(diff.field, domain, grid)
+    derivatives = second_derivatives(domain, grid, ns)
     DiscretizedMolecularDiffusion(diff.field, convert(T, diff.diffusivity),
                                   bcs, derivatives, ns)
 end
@@ -24,9 +24,11 @@ end
 islinear(::DiscretizedMolecularDiffusion) = true
 state_fields(diff::DiscretizedMolecularDiffusion) = diff.field
 
-add_rate!(rate, term::DiscretizedMolecularDiffusion, state, t, log) =
+function add_rate!(rate, term::DiscretizedMolecularDiffusion, state, t, log)
     add_laplacian!(rate[term.field], state[term.field], term.boundary_conditions...,
                    term.derivatives, term.nodes, term.diffusivity)
+    rate
+end
 
 """
 Compute the Laplacian of a scalar field and add it to a different scalar field.

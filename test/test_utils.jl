@@ -1,10 +1,10 @@
 function setup_random_fields(T, n1, n2, n3)
-    gd = ABL.DistributedGrid((n1, n2, n3))
+    gd = ABL.Grid((n1, n2, n3))
     uh = ABL.zeros(T, gd, ABL.NodeSet(:C))
     uv = ABL.zeros(T, gd, ABL.NodeSet(:I))
     fill!(uh, rand(Complex{T}))
     fill!(uv, rand(Complex{T}))
-    ht = ABL.Transform.HorizontalTransform(T, gd, ABL.Transform.default_size(gd))
+    ht = ABL.PhysicalSpace.Transform2D(T, ABL.PhysicalSpace.default_size(gd))
     gd, ht, uh, uv
 end
 
@@ -64,7 +64,7 @@ function run_mpi_test(file, nprocs::Integer, subset = [])
     pass = true
     try
         MPI.mpiexec() do cmd
-            run(`$cmd -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $(join(subset, " "))`)
+            run(`$cmd -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $subset`)
         end
     catch
         st = stacktrace()[2:end]
@@ -97,7 +97,19 @@ function show_all(var)
     end
 end
 
-global_sum(x) = MPI.Initialized() ? MPI.Allreduce(x, +, MPI.COMM_WORLD) : x
+# specifying T avoids accidentially taking the minimum in Fourier space
+global_minimum(val::T) where {T<:Real} =
+        MPI.Initialized() ? MPI.Allreduce(val, MPI.MIN, MPI.COMM_WORLD) : val
+global_minimum(field::Array{T}) where {T<:Real} =
+    global_minimum(mapreduce(abs, min, field))
+
+# specifying T avoids accidentially taking the maximum in Fourier space
+global_maximum(val::T) where {T<:Real} =
+        MPI.Initialized() ? MPI.Allreduce(val, MPI.MAX, MPI.COMM_WORLD) : val
+global_maximum(field::Array{T}) where {T<:Real} =
+    global_maximum(mapreduce(abs, max, field))
+
+global_sum(x) = MPI.Initialized() ? MPI.Allreduce(sum(x), +, MPI.COMM_WORLD) : sum(x)
 
 function global_vector(x)
     x = collect(x)

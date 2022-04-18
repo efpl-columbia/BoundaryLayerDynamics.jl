@@ -13,7 +13,7 @@ struct DiscretizedConstantSource <: DiscretizedProcess
     field::Symbol
 end
 
-function init_process(T, src::ConstantSource, grid, domain)
+function init_process(src::ConstantSource, domain, grid)
     DiscretizedConstantSource(src.field)
 end
 

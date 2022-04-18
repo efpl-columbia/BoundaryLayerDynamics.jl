@@ -4,7 +4,7 @@ function test_abl_setup()
     N = 64
     L = (4π, 2π, 1)
 
-    domain = SemiperiodicDomain(L, RoughWall(1e-4), FreeSlipBoundary())
+    domain = Domain(L, RoughWall(1e-4), FreeSlipBoundary())
     processes = incompressible_flow(Re)
     abl = DiscretizedABL(N, domain, incompressible_flow(Re))
 

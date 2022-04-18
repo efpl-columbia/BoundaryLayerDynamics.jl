@@ -1,8 +1,9 @@
 module BoundaryConditions
 
 using MPI: MPI
-using ..Domain: SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
-using ..Grid: fdsize, neighbors
+using ..Domains: ABLDomain as Domain, SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
+using ..Grids: AbstractGrid as Grid, fdsize, neighbors
+using ..PhysicalSpace: pdsize
 
 struct BoundaryCondition{BC,Nb,Na,C,A}
     type::BC
@@ -10,6 +11,20 @@ struct BoundaryCondition{BC,Nb,Na,C,A}
     comm::C
     BoundaryCondition(type::BC, buffer::A, comm::C, (Nb, Na)) where {BC,A,C} =
         new{BC,Nb,Na,C,A}(type, buffer, comm)
+end
+
+# set up frequency domain boundary condition
+function BoundaryCondition(::Type{T}, type, grid::Grid) where T
+    type = init_bctype(T, type)
+    buffer = zeros(Complex{T}, fdsize(grid))
+    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
+end
+
+# set up physical domain boundary condition
+function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing) where T
+    type = init_bctype(T, type)
+    buffer = zeros(T, pdsize(grid, dealiasing))
+    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
 end
 
 struct ConstantValue{T}
@@ -24,38 +39,32 @@ const DirichletBC = BoundaryCondition{ConstantValue}
 const NeumannBC = BoundaryCondition{ConstantGradient}
 
 
-# set up frequency domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid) where T
-    type = init_bctype(T, type)
-    buffer = zeros(Complex{T}, fdsize(grid))
-    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
-end
-
-# set up physical domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid, dealiasing) where T
-    type = init_bctype(T, type)
-    buffer = zeros(T, pdsize(grid, dealiasing))
-    BoundaryCondition(type, buffer, neighbors(grid), grid.comm)
-end
-
 # convert boundary conditions into concrete types
 init_bctype(::Type{T}, type::Symbol) where T = init_bctype(T, Val(type), zero(T))
 init_bctype(::Type{T}, type::Pair) where T = init_bctype(T, Val(first(type)), convert(T, last(type)))
 init_bctype(::Type{T}, ::Val{:dirichlet}, value::T) where T = ConstantValue(value)
 init_bctype(::Type{T}, ::Val{:neumann}, gradient::T) where T = ConstantGradient(gradient)
+init_bctype(::Type{T}, ::Nothing) where T = Nothing
 
-function init_bcs(::Type{T}, domain, grid, field) where T
-    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), grid)
-    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), grid)
+
+function init_bcs(field, domain::Domain{T}, opts...) where T
+    # options passed on to boundary condition allow for initializing both
+    # frequency-space and physical-space boundary conditions
+    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), opts...)
+    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), opts...)
     (lbc, ubc)
 end
+
+internal_bc(domain::Domain{T}, grid) where T =
+    BoundaryCondition(T, nothing, grid)
+internal_bc(domain::Domain{T}, grid, dims) where T =
+    BoundaryCondition(T, nothing, grid, dims)
 
 # create boundary conditions from boundary definitions
 bctype(boundary, field::Symbol) = bctype(boundary, Val(field))
 bctype(boundary::CustomBoundary, ::Val{F}) where F = boundary.behaviors[F]
 bctype(::SmoothWall, ::Val{:vel1}) = :dirichlet
 bctype(::SmoothWall, ::Val{:vel2}) = :dirichlet
-bctype(::SmoothWall, ::Val{:vel3}) = :dirichlet
 bctype(::SmoothWall, ::Val{:vel3}) = :dirichlet
 bctype(::RoughWall, ::Val{:vel1}) = :dirichlet # TODO: free slip boundary for resolved velocity
 bctype(::RoughWall, ::Val{:vel2}) = :dirichlet
@@ -132,6 +141,18 @@ function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb
     MPI.Send(layers[1], Nb, MTAG_DN, upper_bc.comm)
     MPI.Wait!(r)
     upper_bc.buffer
+end
+
+"""
+This function takes a field defined on C-nodes, converts it into layers, and expands
+them through communication such that the list includes the layers just above and
+below all I-nodes. This means passing data down throughout the domain.
+The boundary condition is only used for passing data, the actual values are unused.
+"""
+function layers_c2i(field::AbstractArray, bc_above::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
+    field = layers(field)
+    field_above = layer_above(field, bc_above)
+    isnothing(Na) ? field : (field..., field_above)
 end
 
 function layers_expand_full(field::AbstractArray,

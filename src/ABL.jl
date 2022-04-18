@@ -1,49 +1,50 @@
 module ABL
 __precompile__(false)
 
-include("util.jl")
-include("semiperiodic_domain.jl")
-include("distributed_grid.jl")
-include("boundary_conditions.jl")
-include("horizontal_transform.jl")
-include("derivatives.jl")
-include("processes.jl")
-
-
 # detail-oriented interface
 export DiscretizedABL, incompressible_flow, initialize!, reset!, coordinates
 
 # domain and boundary conditions
-export SemiperiodicDomain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
+export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
 
 # physical processes
-export MolecularDiffusion
+export MolecularDiffusion, MomentumAdvection
+
+include("util.jl")
+include("Domains.jl")
+include("Grids.jl")
+include("physical_space.jl")
+include("boundary_conditions.jl")
+include("derivatives.jl")
+include("Processes.jl")
 
 using .Helpers: Helpers
-using .Grid: DistributedGrid, NodeSet, nodes, vrange
-using .Transform: init_transforms, get_field, set_field!, default_size
-using .Domain: SemiperiodicDomain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary,
-               x1range, x2range, x3range
+using .Grids: StaggeredFourierGrid as Grid, NodeSet, nodes, vrange
+using .PhysicalSpace: init_physical_spaces, get_field, set_field!, default_size
 using .Processes
+using .Domains
+const Domain = ABLDomain
+
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
 
 struct DiscretizedABL{T,P}
     # TODO: decide on name
     # e.g. DiscretizedABL, DiscretizedFlow, DiscretizedFlowSystem, DiscretizedSystem
-    state
-    grid
-    processes::P
-    transforms
     domain
+    grid
+    state
+    processes::P
+    physical_spaces
 
-    function DiscretizedABL(modes, domain::SemiperiodicDomain{T}, processes;
+    function DiscretizedABL(modes, domain::Domain{T}, processes;
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
-        grid = DistributedGrid(modes, comm = comm)
-        processes = [init_process(T, p, grid, domain) for p in processes]
-        state = NamedTuple((f, zeros(T, grid, nodes(f))) for f in state_fields(processes))
-        transforms = init_transforms(T, grid, processes)
-        new{T,typeof(processes)}(state, grid, processes, transforms, domain)
+        grid = Grid(modes, comm = comm)
+        processes = [init_process(p, domain, grid) for p in processes]
+        state = NamedTuple(f => zeros(T, grid, nodes(f)) for f in state_fields(processes))
+        physical_spaces = init_physical_spaces(transformed_fields(processes), domain, grid)
+
+        new{T,typeof(processes)}(domain, grid, state, processes, physical_spaces)
     end
 
 end
@@ -57,7 +58,7 @@ end
 
 function initialize!(abl::DiscretizedABL; initial_conditions...)
     for (field, ic) in initial_conditions
-        set_field!(ic, abl.state[field], abl.transforms[default_size(abl.grid)],
+        set_field!(ic, abl.state[field], abl.physical_spaces[default_size(abl.grid)].transform,
                    abl.domain, abl.grid, nodes(field))
     end
 end
@@ -65,7 +66,7 @@ end
 reset!(abl::DiscretizedABL) = (Helpers.reset!(abl.state); abl)
 
 Base.getindex(abl::DiscretizedABL, field::Symbol) =
-    get_field(abl.transforms[default_size(abl.grid)], abl.state[field])
+    get_field(abl.physical_spaces[default_size(abl.grid)].transform, abl.state[field])
 
 coordinates(abl::DiscretizedABL) = coordinates(abl, :vel1)
 coordinates(abl::DiscretizedABL, dim::Int) = coordinates(abl, :vel1, Val(dim))
@@ -92,7 +93,7 @@ incompressible_flow(Re, constant_flux = false) = [
 # generate a function that performs the update of the rate
 # based on the current state
 rate!(abl::DiscretizedABL) = (r, s, t; checkpoint = false) -> begin
-    rate!(r, s, t, abl.processes, abl.transforms, abl.log)
+    rate!(r, s, t, abl.processes, abl.physical_spaces, abl.log)
     checkpoint && process_logs!(log, t) # perform logging activities
 end
 

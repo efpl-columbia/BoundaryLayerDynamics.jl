@@ -1,10 +1,13 @@
-module Grid
+module Grids
+
+export StaggeredFourierGrid
 
 using MPI: MPI
 
-export DistributedGrid
+abstract type AbstractGrid end
+abstract type DistributedGrid{C} <: AbstractGrid end
 
-struct DistributedGrid{C}
+struct StaggeredFourierGrid{C} <: DistributedGrid{C}
     k1max::Int
     k2max::Int
     n3c::Int
@@ -14,7 +17,7 @@ struct DistributedGrid{C}
     i3max::Int
     comm::C
 
-    function DistributedGrid((n1, n2, n3)::Tuple{Int,Int,Int};
+    function StaggeredFourierGrid((n1, n2, n3)::Tuple{Int,Int,Int};
             comm = MPI.Initialized() ? MPI.COMM_WORLD : nothing)
 
         # determine largest wavenumber for horizontal directions
@@ -33,8 +36,8 @@ struct DistributedGrid{C}
     end
 end
 
-DistributedGrid(n::Int; kwargs...) = DistributedGrid((n, n, n); kwargs...)
-DistributedGrid((nh, nv)::Tuple{Int,Int}; kwargs...) = DistributedGrid((nh, nh, nv); kwargs...)
+StaggeredFourierGrid(n::Int; kwargs...) = StaggeredFourierGrid((n, n, n); kwargs...)
+StaggeredFourierGrid((nh, nv)::Tuple{Int,Int}; kwargs...) = StaggeredFourierGrid((nh, nh, nv); kwargs...)
 
 init_processes(comm::Nothing) = (comm, 1, 1)
 function init_processes(comm)
@@ -51,10 +54,16 @@ function neighbors(grid, displacement = 1)
     Tuple(n == MPI.MPI_PROC_NULL ? nothing : n for n in neighbors)
 end
 
-wavenumbers(gd, dim::Int) = wavenumbers(gd, Val(dim))
-wavenumbers(gd, ::Val{1}) = [0:gd.k1max; ]
-wavenumbers(gd, ::Val{2}) = [0:gd.k2max; -gd.k2max:-1]
 wavenumbers(gd) = wavenumbers.((gd,), (1,2))
+wavenumbers(gd, dim::Int) = begin
+    if dim == 1
+        [0:gd.k1max; ]
+    elseif dim == 2
+        [0:gd.k2max; -gd.k2max:-1]
+    else
+        error("Invalid dimension `$dim` for wavenumbers")
+    end
+end
 
 struct NodeSet{NS}
     NodeSet(ns::Symbol) = ns in (:C, :I, :Iext) ? new{ns}() :
@@ -71,6 +80,9 @@ nodes(field::Symbol) = nodes(Val(field))
 nodes(::Val{:vel1}) = NodeSet(:C)
 nodes(::Val{:vel2}) = NodeSet(:C)
 nodes(::Val{:vel3}) = NodeSet(:I)
+nodes(::Val{:vort1}) = NodeSet(:I)
+nodes(::Val{:vort2}) = NodeSet(:I)
+nodes(::Val{:vort3}) = NodeSet(:C)
 nodes(::Val{F}) where F = error("Nodes of field `$F` are unknown. Define `nodes(::Val{:$F})` to resolve this error.")
 
 Base.zeros(T, grid, ::NodeSet{:C}) = zeros(Complex{T}, fdsize(grid)..., grid.n3c)

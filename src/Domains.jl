@@ -1,15 +1,17 @@
-module Domain
+module Domains
 
-export SemiperiodicDomain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
+export ABLDomain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, x1range, x2range, x3range
 
-struct SemiperiodicDomain{T,F1,F2}
+abstract type AbstractDomain{T} end
+
+struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
     hsize::Tuple{T,T}
     vmap::F1 # [0,1] → physical domain
     Dvmap::F2
     lower_boundary
     upper_boundary
 
-    function SemiperiodicDomain(::Type{T}, size, lower_boundary, upper_boundary, mapping = nothing) where T
+    function ABLDomain(::Type{T}, size, lower_boundary, upper_boundary, mapping = nothing) where T
 
         one_sided = any(isa.((lower_boundary, upper_boundary), FreeSlipBoundary))
 
@@ -24,7 +26,7 @@ struct SemiperiodicDomain{T,F1,F2}
 end
 
 # use double precision by default
-SemiperiodicDomain(size, args...) = SemiperiodicDomain(Float64, size, args...)
+ABLDomain(size, args...) = ABLDomain(Float64, size, args...)
 
 """
     SinusoidalMapping(η)
@@ -71,9 +73,28 @@ instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, one_sided) where T =
 instantiate(mapping, L3, one_sided) = instantiate(mapping, (zero(L3), L3), one_sided)
 
 # get physical coordinates from normalized domain positions ∈ [0,1]
-x1range(domain::SemiperiodicDomain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
-x2range(domain::SemiperiodicDomain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
-x3range(domain::SemiperiodicDomain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
+x1range(domain::ABLDomain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
+x2range(domain::ABLDomain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
+x3range(domain::ABLDomain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
+
+# struct holding the information necessary to compute the jacobian of the
+# mapping from the simulation space [0,1]×[0,1]×[0,1] to the physical domain
+#struct DomainJacobian
+    # TODO
+#end
+
+# Base.getindex(j::DomainJacobian, i::Int)
+
+"""
+Computes the constant coordinate scaling along dimension `dim`, i.e. 1/L
+where L is the domain size. This can only be computed for coordinates that are
+at most linearly transformed and will return an error otherwise.
+"""
+function scalefactor(domain::ABLDomain, dim::Int)
+    # TODO: support this for vertical directions if there is no transform in use
+    dim == 1 ? 1/domain.hsize1 : dim == 2 ? 1/domain.hsize2 :
+        error("Coordinates along dimension 3 might be transformed")
+    end
 
 struct RoughWall
     roughness

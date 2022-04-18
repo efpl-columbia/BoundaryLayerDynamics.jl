@@ -6,7 +6,7 @@ end
 struct DiscretizedPressure <: DiscretizedProcess
 end
 
-function init_process(T, press::Pressure, grid, domain)
+function init_process(press::Pressure, domain, grid)
     DiscretizedPressure()
 end
 
