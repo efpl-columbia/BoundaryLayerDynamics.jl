@@ -10,6 +10,9 @@ export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
 # physical processes
 export MolecularDiffusion, MomentumAdvection, Pressure
 
+# ODE methods
+export Euler, AB2, SSPRK22, SSPRK33
+
 include("util.jl")
 include("Domains.jl")
 include("Grids.jl")
@@ -17,6 +20,7 @@ include("physical_space.jl")
 include("boundary_conditions.jl")
 include("derivatives.jl")
 include("Processes.jl")
+include("ODEMethods.jl")
 
 using .Helpers: Helpers
 using .Grids: StaggeredFourierGrid as Grid, NodeSet, nodes, vrange
@@ -24,6 +28,7 @@ using .PhysicalSpace: init_physical_spaces, get_field, set_field!, default_size
 using .Processes
 using .Domains
 const Domain = ABLDomain
+using .ODEMethods
 
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
