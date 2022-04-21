@@ -2,10 +2,11 @@ module ABL
 __precompile__(false)
 
 # detail-oriented interface
-export DiscretizedABL, incompressible_flow, initialize!, reset!, coordinates
+export DiscretizedABL, closedchannelflow, openchannelflow, incompressible_flow,
+    initialize!, reset!, evolve!, coordinates
 
 # domain and boundary conditions
-export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary
+export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, SinusoidalMapping
 
 # physical processes
 export MolecularDiffusion, MomentumAdvection, Pressure
@@ -20,18 +21,21 @@ include("physical_space.jl")
 include("boundary_conditions.jl")
 include("derivatives.jl")
 include("Processes.jl")
+include("State.jl")
 include("ODEMethods.jl")
 
 using .Helpers: Helpers
-using .Grids: StaggeredFourierGrid as Grid, NodeSet, nodes, vrange
-using .PhysicalSpace: init_physical_spaces, get_field, set_field!, default_size
+using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for convenience in tessts
+using .PhysicalSpace: init_physical_spaces
 using .Processes
 using .Domains
 const Domain = ABLDomain
+using .State: State, init_state
 using .ODEMethods
 
-
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
+using TimerOutputs: @timeit, print_timer, TimerOutput # TODO: remove unused imports
+using RecursiveArrayTools: ArrayPartition
 
 struct DiscretizedABL{T,P}
     # TODO: decide on name
@@ -46,7 +50,7 @@ struct DiscretizedABL{T,P}
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
         grid = Grid(modes, comm = comm)
         processes = [init_process(p, domain, grid) for p in processes]
-        state = NamedTuple(f => zeros(T, grid, nodes(f)) for f in state_fields(processes))
+        state = init_state(T, grid, processes)
         physical_spaces = init_physical_spaces(transformed_fields(processes), domain, grid)
 
         new{T,typeof(processes)}(domain, grid, state, processes, physical_spaces)
@@ -61,47 +65,89 @@ function Base.show(io::IO, ::MIME"text/plain", abl::DiscretizedABL)
     print(io, ", i₃ ∈ [1,$(abl.grid.n3global)]")
 end
 
-function initialize!(abl::DiscretizedABL; initial_conditions...)
-    # TODO: consider setting all other fields to zero
-    for (field, ic) in initial_conditions
-        set_field!(ic, abl.state[field], abl.physical_spaces[default_size(abl.grid)].transform,
-                   abl.domain, abl.grid, nodes(field))
-    end
-end
-
-reset!(abl::DiscretizedABL) = (Helpers.reset!(abl.state); abl)
-
+# convenience functions to interact with state through ABL struct
+initialize!(abl::DiscretizedABL; kwargs...) =
+    State.initialize!(abl.state, abl.domain, abl.grid, abl.physical_spaces; kwargs...)
+reset!(abl::DiscretizedABL) = State.reset!(abl.state)
 Base.getindex(abl::DiscretizedABL, field::Symbol) =
-    get_field(abl.physical_spaces[default_size(abl.grid)].transform, abl.state[field])
+    State.getterm(abl.state, field, abl.domain, abl.grid, abl.physical_spaces)
+coordinates(abl::DiscretizedABL, opts...) = State.coordinates(abl.domain, abl.grid, opts...)
 
-coordinates(abl::DiscretizedABL) = coordinates(abl, :vel1)
-coordinates(abl::DiscretizedABL, dim::Int) = coordinates(abl, :vel1, Val(dim))
-coordinates(abl::DiscretizedABL, field, dim::Int) = coordinates(abl, field, Val(dim))
-coordinates(abl::DiscretizedABL, field, ::Val{1}) = x1range(abl.domain, h1range(abl.grid, default_size(abl.grid)))
-coordinates(abl::DiscretizedABL, field, ::Val{2}) = x2range(abl.domain, h2range(abl.grid, default_size(abl.grid)))
-coordinates(abl::DiscretizedABL, field, ::Val{3}) = x3range(abl.domain, vrange(abl.grid, nodes(field)))
-function coordinates(abl::DiscretizedABL, field::Symbol)
-    ((x1, x2, x3) for x1=coordinates(abl, field, Val(1)),
-                      x2=coordinates(abl, field, Val(2)),
-                      x3=coordinates(abl, field, Val(3)))
+function momentum_source(; constant_flux = nothing,
+        constant_forcing = isnothing(constant_flux) ? 1 : nothing)
+    isnothing(constant_flux) || isnothing(constant_forcing) ||
+        error("Momentum source set up for both constant forcing and constant flux")
+    vel = (:vel1, :vel2)
+    isnothing(constant_forcing) ||
+        return (ConstantSource(vel[i], f) for (i, f) in enumerate(constant_forcing))
+    isnothing(constant_flux) ||
+        return (ConstantMean(vel[i], mean) for (i, mean) in enumerate(constant_flux))
+    error("No momentum source defined")
 end
 
-
-incompressible_flow(Re, constant_flux = false) = [
+incompressible_flow(viscosity; kwargs...) = [
     MomentumAdvection(),
-    MolecularDiffusion(:vel1, 1/Re),
-    MolecularDiffusion(:vel2, 1/Re),
-    MolecularDiffusion(:vel3, 1/Re),
+    (MolecularDiffusion(vel, viscosity) for vel = (:vel1, :vel2, :vel3))...,
     Pressure(),
-    constant_flux ? ConstantMean(:vel1) : ConstantSource(:vel1),
+    momentum_source(; kwargs...)...,
 ]
+
+function closedchannelflow(Re, dims; constant_flux = false)
+    domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
+    processes = incompressible_flow(1/Re, constant_flux)
+    DiscretizedABL(dims, domain, processes)
+end
+
+function openchannelflow(Re, dims; constant_flux = false)
+    domain = Domain((4π, 2π, 1), SmoothWall(), FreeSlipBoundary())
+    processes = incompressible_flow(1/Re, constant_flux)
+    DiscretizedABL(dims, domain, processes)
+end
 
 # generate a function that performs the update of the rate
 # based on the current state
-rate!(abl::DiscretizedABL) = (r, s, t; checkpoint = false) -> begin
-    rate!(r, s, t, abl.processes, abl.physical_spaces, abl.log)
-    checkpoint && process_logs!(log, t) # perform logging activities
+rate!(abl::DiscretizedABL, log = nothing) = (r, s, t; checkpoint = false) -> begin
+    fields = keys(abl.state)
+    rates = NamedTuple{fields}(r.x)
+    state = NamedTuple{fields}(s.x)
+    compute_rates!(rates, state, t, abl.processes, abl.physical_spaces, checkpoint ? log : nothing)
+    #checkpoint && process_logs!(log, t) # perform logging activities (TODO)
+end
+
+# generate a function that performs the projection step of the current state
+projection!(abl::DiscretizedABL) = (s) -> begin
+    fields = keys(abl.state)
+    state = NamedTuple{fields}(s.x)
+    apply_projections!(state, abl.processes)
+end
+
+function evolve!(abl::DiscretizedABL, tspan;
+        dt = nothing, method = SSPRK33(),
+        verbose = true)
+
+    # validate/normalize time arguments
+    isnothing(dt) && ArgumentError("The keyword argument `dt` is mandatory")
+    t1 = length(tspan) == 1 ? zero(first(tspan)) : first(tspan)
+    t2 = last(tspan)
+    t1, t2, dt = promote(t1, t2, dt)
+
+    # set up logging
+    log = (timer = TimerOutput(),)
+    reset!(log, t) = log
+
+    # initialize integrator and perform one step to compile functions
+    @timeit log.timer "Initialization" begin
+        u0 = ArrayPartition(values(abl.state)...)
+        prob = ODEProblem(rate!(abl), projection!(abl),
+                                      u0, (t1, t2), checkpoint = true)
+        reset!(log, t1) # removes samples from initial state and sets correct start time
+    end
+
+    # perform the full integration
+    @timeit log.timer "Time integration" begin
+        solve!(prob, method, dt, checkpoints=dt:dt:t2)
+    end
 end
 
 
-end
+end # module ABL

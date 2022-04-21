@@ -271,17 +271,10 @@ function get_field!(pdfield, transform, fdfield, prefactors = ones(eltype(pdfiel
 end
 
 # convenience function allocating a new array
-function get_field(transform::Transform2D{T}, fdfield, dealiasing = nothing) where T
-    # we can pass a named tuple to pdsize instead of the grid,
-    # since it only needs access to kmax
-    k1max = size(fdfield, 1) - 1
-    k2max = div(size(fdfield, 2) - 1, 2)
-    n1, n2 = pdsize((k1max = k1max, k2max = k2max), dealiasing)
+function get_field(transform::Transform2D{T}, fdfield) where T
+    n1, n2 = size(transform.pdbuffer)
     n3 = size(fdfield, 3)
     get_field!(zeros(T, n1, n2, n3), transform, fdfield)
 end
-
-
-
 
 end # module PhysicalSpace

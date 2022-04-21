@@ -23,7 +23,7 @@ physical_domain_terms(adv::DiscretizedMomentumAdvection) =
 physical_domain_rates(adv::DiscretizedMomentumAdvection) =
     Tuple(f => adv.dims for f in (:vel1 , :vel2, :vel3))
 
-function add_rate!(rates, term::DiscretizedMomentumAdvection, state, t, log)
+function add_rates!(rates, term::DiscretizedMomentumAdvection, state, t, log)
 
     # unpack required fields
     state, rates = state[term.dims], rates[term.dims]

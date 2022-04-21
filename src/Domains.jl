@@ -6,23 +6,27 @@ abstract type AbstractDomain{T} end
 
 struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
     hsize::Tuple{T,T}
-    vmap::F1 # [0,1] → physical domain
-    Dvmap::F2
+    vmap::F1  # ζ ∈ [0,1] → x₃ ∈ physical domain
+    Dvmap::F2 # dx₃/dζ
     lower_boundary
     upper_boundary
 
-    function ABLDomain(::Type{T}, size, lower_boundary, upper_boundary, mapping = nothing) where T
+    function ABLDomain(::Type{T}, dims::Tuple, lower_boundary, upper_boundary, mapping = nothing) where T
 
-        one_sided = any(isa.((lower_boundary, upper_boundary), FreeSlipBoundary))
+        l1, l2 = convert.(T, dims[1:2])
+        l3 = length(dims) == 2 ? one(T) : dims[3]
 
-        hsize(L::T) = (L, L)
-        hsize(L::Tuple{T,T}) = (L[1], L[1])
-        hsize(L::Tuple{T,T,T}) = (L[1], L[2])
-        hsize(L) = hsize(convert.(T, size))
-        x3, Dx3 = instantiate(mapping, last(size), one_sided)
+        x3, Dx3 = instantiate(mapping, l3, (lower_boundary, upper_boundary))
 
-        new{T,typeof(x3),typeof(Dx3)}(hsize(size), x3, Dx3, lower_boundary, upper_boundary)
+        new{T,typeof(x3),typeof(Dx3)}((l1, l2), x3, Dx3, lower_boundary, upper_boundary)
     end
+end
+
+Base.size(domain::ABLDomain) = Tuple(size(domain, i) for i=1:3)
+Base.size(domain::ABLDomain{T}, dim) where T = begin
+    dim in (1,2) && return hsize[dim]
+    dim == 3 && return convert(T, domain.vmap(one(T)) - domain.vmap(zero(T)))
+    error("Invalid dimension `$dim`")
 end
 
 # use double precision by default
@@ -46,31 +50,51 @@ function at the wall.
 """
 struct SinusoidalMapping
     parameter
-    SinusoidalMapping(η) = (@assert 0 < η < 1; new(η))
+    variant
+    SinusoidalMapping(η, variant=:auto) = (@assert 0 < η < 1; new(η, variant))
 end
 
-function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, one_sided) where T
+function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T
 
     @assert x3min < x3max
     η = convert(T, m.parameter)
     l = x3max - x3min
 
-    if one_sided
+    variant = m.variant
+    if variant == :auto
+        bls = hasboundarylayer.(bcs)
+        if bls == (true, true)
+            variant = :symmetric
+        elseif bls == (true, false)
+            variant = :below
+        elseif bls == (false, true)
+            variant = :above
+        else
+            error("Could not determine variant of SinusoidalMapping")
+        end
+    end
+
+    if variant == :symmetric
         x3 = ζ -> convert(T, x3min + l * (1 + sin(η*(ζ-1)*π/2) / sin(η*π/2)))
         Dx3 = ζ -> convert(T, l * (η*π/2) * (cos(η*(ζ-1)*π/2) / sin(η*π/2)))
         x3, Dx3
-    else
+    elseif variant == :below
         m = (x3min + x3max) / 2
         x3 = ζ -> convert(T, m + l/2 * (sin(η*(2*ζ-1)*π/2) / sin(η*π/2)))
         Dx3 = ζ -> convert(T, l/2 * (2*η*π/2) * (cos(η*(-1 + 2*ζ)*π/2) / sin(η*π/2)))
         x3, Dx3
+    elseif variant == :above
+        # TODO: add implementation
+        error("SinusoidalMapping at top of domain not yet implemented")
+    else
+        error("Unknown variant of SinusoidalMapping")
     end
 end
 
-instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, one_sided) where T =
+instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T =
     ζ -> x3min + ζ * (x3max - x3min), x -> x3max - x3min
-
-instantiate(mapping, L3, one_sided) = instantiate(mapping, (zero(L3), L3), one_sided)
+instantiate(m::Tuple{Function,Function}, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T = m
+instantiate(mapping, L3::Real, bcs = nothing) = instantiate(mapping, (zero(L3), L3), bcs)
 
 # get physical coordinates from normalized domain positions ∈ [0,1]
 x1range(domain::ABLDomain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
@@ -117,5 +141,9 @@ struct CustomBoundary
     behaviors
     CustomBoundary(; behaviors...) = new(NamedTuple(behaviors))
 end
+
+hasboundarylayer(::RoughWall) = true
+hasboundarylayer(::SmoothWall) = true
+hasboundarylayer(::FreeSlipBoundary) = false
 
 end

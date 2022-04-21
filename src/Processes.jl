@@ -1,6 +1,6 @@
 module Processes
 
-export init_process, state_fields, transformed_fields, islinear, add_rate!
+export init_process, state_fields, transformed_fields, islinear, compute_rates!, apply_projections!
 
 abstract type ProcessDefinition end
 abstract type DiscretizedProcess end
@@ -13,29 +13,30 @@ using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, 
 using ..Derivatives: second_derivatives, dx1factors, dx2factors, dx3factors
 using ..PhysicalSpace: physical_domain!, pdsize
 
-function rate!(rate, state, t, processes, transforms, log = nothing)
+function compute_rates!(rate, state, t, processes, transforms, log = nothing)
 
     # set rate back to zero before adding terms
     reset!(rate)
 
     # add linear terms in frequency domain
     for process in filter(islinear, processes)
-        add_rate!(rate, process, state, t, log)
+        add_rates!(rate, process, state, t, log)
     end
 
     # add nonlinear terms in physical domain
     physical_domain!(rate, state, transforms) do rate, state
         for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
             # TODO: select correct size for each term
-            add_rate!(rate, process, state, t, log)
+            add_rates!(rate, process, state, t, log)
         end
     end
 end
 
 # allow computing rates without specifying log argument
-add_rate!(rate, process, state, t) = add_rate!(rate, process, state, t, nothing)
+add_rates!(rate, process, state, t) = add_rates!(rate, process, state, t, nothing)
 
-function projection!(state, processes, log = nothing)
+function apply_projections!(state, processes)
+    # TODO: allow logging data from projection step
     for process in filter(isprojection, processes)
         apply_projection!(state, process)
     end
@@ -72,7 +73,7 @@ physical_domain_terms(process) = ()
 physical_domain_rates(process) = ()
 
 # linear processes are defined by not having physical domain requirements
-islinear(process) = isempty(physical_domain_terms(process))
+islinear(process) = isempty(physical_domain_terms(process)) && !isprojection(process)
 
 # by default, processes are not assumed to be projections
 isprojection(process) = false

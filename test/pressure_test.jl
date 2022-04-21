@@ -3,11 +3,11 @@ function test_batch_ldlt(N)
     T = Float64
     gd = ABL.Grid((4, 4, N)) # size in FD: (2, 3, N)
     batch_size = 4 # not evenly divisible by 2x3
-    n3c = ABL.Grids.fdsize(gd, ABL.NodeSet(:C))[3]
-    n3i = ABL.Grids.fdsize(gd, ABL.NodeSet(:I))[3]
+    n3c = ABL.Grids.fdsize(gd, NS(:C))[3]
+    n3i = ABL.Grids.fdsize(gd, NS(:I))[3]
 
     # initialize rhs vectors with random values
-    b_dist = zeros(T, gd, ABL.NodeSet(:C))
+    b_dist = zeros(T, gd, NS(:C))
     map!(x -> rand(eltype(b_dist)), b_dist, b_dist)
     nx, ny = size(b_dist)[1:2]
 
@@ -58,24 +58,26 @@ function test_pressure_solver(N)
 
     # check pressure in u-direction
     initialize!(abl, vel1 = (x,y,z) -> 1 + sin(x), vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
-    ABL.Processes.projection!(abl.state, abl.processes)
+    ABL.Processes.apply_projections!(abl.state, abl.processes)
     u_pd = abl[:vel1]
     @test u_pd ≈ ones(T, size(u_pd))
 
     # check pressure in v-direction
     initialize!(abl, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 1 + sin(y), vel3 = (x,y,z) -> 0)
-    ABL.Processes.projection!(abl.state, abl.processes)
+    ABL.Processes.apply_projections!(abl.state, abl.processes)
     v_pd = abl[:vel2]
     @test v_pd ≈ ones(T, size(v_pd))
 
     # check pressure in w-direction
     initialize!(abl, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
-    ABL.Processes.projection!(abl.state, abl.processes)
+    ABL.Processes.apply_projections!(abl.state, abl.processes)
     w_pd = abl[:vel3]
     @test w_pd ≈ bc3 * ones(T, size(w_pd))
 end
 
-test_batch_ldlt(16)
-test_pressure_solver(16)
-MPI.Initialized() && test_batch_ldlt(MPI.Comm_size(MPI.COMM_WORLD))
-MPI.Initialized() && test_pressure_solver(MPI.Comm_size(MPI.COMM_WORLD))
+@timeit "Pressure" @testset "Pressure Solver" begin
+    test_batch_ldlt(16)
+    test_pressure_solver(16)
+    MPI.Initialized() && test_batch_ldlt(MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_pressure_solver(MPI.Comm_size(MPI.COMM_WORLD))
+end

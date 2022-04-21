@@ -175,4 +175,4 @@ function layers_expand_full(field::AbstractArray,
     layer_below(field, bc_below), field..., layer_above(field, bc_above)
 end
 
-end
+end # module BoundaryConditions

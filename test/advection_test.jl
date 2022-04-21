@@ -39,11 +39,11 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = u0,  vel2 = 0, vel3 = 0)
-        ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.set_field!((x,y,z) -> du0(x,y,z) * u0(x,y,z), adv[:vel2],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel2))
-        ABL.set_field!((x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), adv[:vel3],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel3))
+        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        ABL.PhysicalSpace.set_field!((x,y,z) -> du0(x,y,z) * u0(x,y,z), adv[:vel2],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
+        ABL.PhysicalSpace.set_field!((x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), adv[:vel3],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
 
         # compare solutions
         @test rhs.vel1 .+ 1 ≈ ones(eltype(rhs.vel1), size(rhs.vel1))
@@ -67,11 +67,11 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = v0, vel3 = 0)
-        ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.set_field!((x,y,z) -> dv0(x,y,z) * v0(x,y,z), adv[:vel1],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel1))
-        ABL.set_field!((x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), adv[:vel3],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel3))
+        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        ABL.PhysicalSpace.set_field!((x,y,z) -> dv0(x,y,z) * v0(x,y,z), adv[:vel1],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
+        ABL.PhysicalSpace.set_field!((x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), adv[:vel3],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
 
         # compare solutions
         if Nk == 5
@@ -94,9 +94,9 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = 0, vel3 = w0)
-        ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel1],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel1))
+        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        ABL.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel1],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
 
         # boundary conditions do not match exact solution, so skip the border
         # layers in test
@@ -122,9 +122,9 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = 0, vel3 = w0)
-        ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel2],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.nodes(:vel2))
+        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        ABL.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel2],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
 
         # boundary conditions do not match exact solution, so skip the border
         # layers in test
@@ -185,16 +185,16 @@ function advection_error_convergence(Nh, Nv)
         # create arrays with exact solution (in frequency space)
         adv = deepcopy(abl.state)
         pddims = ABL.PhysicalSpace.pdsize(abl.grid, :quadratic)
-        ABL.set_field!(adv1, adv[:vel1], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.nodes(:vel1))
-        ABL.set_field!(adv2, adv[:vel2], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.nodes(:vel2))
-        ABL.set_field!(adv3, adv[:vel3], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.nodes(:vel3))
+        ABL.PhysicalSpace.set_field!(adv1, adv[:vel1], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
+        ABL.PhysicalSpace.set_field!(adv2, adv[:vel2], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
+        ABL.PhysicalSpace.set_field!(adv3, adv[:vel3], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
 
         # set up velocity field and compute advection term
         initialize!(abl, vel1 = u0, vel2 = v0, vel3 = w0)
-        ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
         # measure error in frequency space
         ε1 = global_maximum(abs.(rhs[:vel1] .- adv[:vel1]))
@@ -241,8 +241,10 @@ function test_advection_convergence(Nz_min)
     Nh, Nv, ε1, ε2, ε3
 end
 
-test_advection_exact(16)
+@timeit "Advection" @testset "Momentum Advection" begin
+    test_advection_exact(16)
 
-# also test the parallel version with one layer per process
-MPI.Initialized() && test_advection_exact(MPI.Comm_size(MPI.COMM_WORLD))
-test_advection_convergence(MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 8)
+    # also test the parallel version with one layer per process
+    MPI.Initialized() && test_advection_exact(MPI.Comm_size(MPI.COMM_WORLD))
+    test_advection_convergence(MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 8)
+end

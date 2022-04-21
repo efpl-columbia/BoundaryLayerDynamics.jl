@@ -21,10 +21,9 @@ function init_process(diff::MolecularDiffusion, domain::Domain{T}, grid) where T
                                   bcs, derivatives, ns)
 end
 
-islinear(::DiscretizedMolecularDiffusion) = true
 state_fields(diff::DiscretizedMolecularDiffusion) = diff.field
 
-function add_rate!(rate, term::DiscretizedMolecularDiffusion, state, t, log)
+function add_rates!(rate, term::DiscretizedMolecularDiffusion, state, t, log)
     add_laplacian!(rate[term.field], state[term.field], term.boundary_conditions...,
                    term.derivatives, term.nodes, term.diffusivity)
     rate

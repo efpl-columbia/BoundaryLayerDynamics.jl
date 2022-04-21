@@ -35,7 +35,7 @@ function test_diffusion(NZ)
     initialize!(abl, vel1 = u0n, vel2 = u0d, vel3 = u0d)
 
     # compute diffusion
-    ABL.Processes.rate!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+    ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
     isample = (5, 7)
     xsample = (isample .- 1) ./ dims[1:2] .* ds[1:2]
