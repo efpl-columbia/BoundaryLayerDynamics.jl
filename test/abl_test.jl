@@ -25,18 +25,21 @@ function test_channel(Nv; Nh = 4, Re = 1.0, CFL = 0.1, T = 1/Re, Nt = 100)
 
     mktempdir_parallel() do dir
         redirect_stdout(devnull) do # keep output verbose to check for errors in output routines
-            integrate!(cf, dt * Nt, dt = dt,
-                profiles_dir = joinpath(dir, "profiles"), profiles_frequency = 10,
-                snapshot_steps = [div(1*Nt,5), div(2*Nt,5), div(3*Nt,5), div(4*Nt,5)],
-                snapshot_dir = joinpath(dir, "snapshots"), verbose = false)
+            output = [MeanProfiles(path=joinpath(dir, "profiles"), output_frequency=10*dt),
+                      Snapshots(path=joinpath(dir, "snapshots"), frequency=div(Nt, 5)*dt)]
+            evolve!(cf, dt * Nt, dt = dt, output = output)
         end
 
         # attempt setting the velocity from the latest snapshot
         last_snapshot = readdir(joinpath(dir, "snapshots"))[end]
-        CF.load_snapshot!(cf, joinpath(dir, "snapshots", last_snapshot))
+        initialize!(cf, joinpath(dir, "snapshots", last_snapshot))
     end
 end
 
 @timeit "ABL Simulation" @testset "Detailed ABL Flow Setup" begin
     test_abl_setup()
+
+    # test that a channel flow with output runs without error
+    test_channel(16)
+    MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))
 end

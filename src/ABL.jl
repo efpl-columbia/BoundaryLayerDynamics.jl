@@ -14,14 +14,19 @@ export MolecularDiffusion, MomentumAdvection, Pressure
 # ODE methods
 export Euler, AB2, SSPRK22, SSPRK33
 
+# logging/output
+export MeanProfiles, Snapshots
+
 include("util.jl")
+include("fileio.jl")
 include("Domains.jl")
 include("Grids.jl")
 include("physical_space.jl")
 include("boundary_conditions.jl")
+include("logging.jl")
+include("State.jl")
 include("derivatives.jl")
 include("Processes.jl")
-include("State.jl")
 include("ODEMethods.jl")
 
 using .Helpers: Helpers
@@ -32,9 +37,10 @@ using .Domains
 const Domain = ABLDomain
 using .State: State, init_state
 using .ODEMethods
+using .Logging: Logging, MeanProfiles, Snapshots, Log, process_samples!
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
-using TimerOutputs: @timeit, print_timer, TimerOutput # TODO: remove unused imports
+using TimerOutputs: @timeit
 using RecursiveArrayTools: ArrayPartition
 
 struct DiscretizedABL{T,P}
@@ -50,7 +56,7 @@ struct DiscretizedABL{T,P}
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
         grid = Grid(modes, comm = comm)
         processes = [init_process(p, domain, grid) for p in processes]
-        state = init_state(T, grid, processes)
+        state = init_state(T, grid, state_fields(processes))
         physical_spaces = init_physical_spaces(transformed_fields(processes), domain, grid)
 
         new{T,typeof(processes)}(domain, grid, state, processes, physical_spaces)
@@ -68,6 +74,8 @@ end
 # convenience functions to interact with state through ABL struct
 initialize!(abl::DiscretizedABL; kwargs...) =
     State.initialize!(abl.state, abl.domain, abl.grid, abl.physical_spaces; kwargs...)
+initialize!(abl::DiscretizedABL, path; kwargs...) =
+    State.initialize!(abl.state, path, abl.domain, abl.grid, abl.physical_spaces)
 reset!(abl::DiscretizedABL) = State.reset!(abl.state)
 Base.getindex(abl::DiscretizedABL, field::Symbol) =
     State.getterm(abl.state, field, abl.domain, abl.grid, abl.physical_spaces)
@@ -92,15 +100,15 @@ incompressible_flow(viscosity; kwargs...) = [
     momentum_source(; kwargs...)...,
 ]
 
-function closedchannelflow(Re, dims; constant_flux = false)
+function closedchannelflow(Re, dims; kwargs...)
     domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
-    processes = incompressible_flow(1/Re, constant_flux)
+    processes = incompressible_flow(1/Re; kwargs...)
     DiscretizedABL(dims, domain, processes)
 end
 
-function openchannelflow(Re, dims; constant_flux = false)
+function openchannelflow(Re, dims; kwargs...)
     domain = Domain((4π, 2π, 1), SmoothWall(), FreeSlipBoundary())
-    processes = incompressible_flow(1/Re, constant_flux)
+    processes = incompressible_flow(1/Re; kwargs...)
     DiscretizedABL(dims, domain, processes)
 end
 
@@ -111,7 +119,6 @@ rate!(abl::DiscretizedABL, log = nothing) = (r, s, t; checkpoint = false) -> beg
     rates = NamedTuple{fields}(r.x)
     state = NamedTuple{fields}(s.x)
     compute_rates!(rates, state, t, abl.processes, abl.physical_spaces, checkpoint ? log : nothing)
-    #checkpoint && process_logs!(log, t) # perform logging activities (TODO)
 end
 
 # generate a function that performs the projection step of the current state
@@ -122,7 +129,7 @@ projection!(abl::DiscretizedABL) = (s) -> begin
 end
 
 function evolve!(abl::DiscretizedABL, tspan;
-        dt = nothing, method = SSPRK33(),
+        dt = nothing, method = SSPRK33(), output = (),
         verbose = true)
 
     # validate/normalize time arguments
@@ -132,15 +139,14 @@ function evolve!(abl::DiscretizedABL, tspan;
     t1, t2, dt = promote(t1, t2, dt)
 
     # set up logging
-    log = (timer = TimerOutput(),)
-    reset!(log, t) = log
+    log = Log(output, abl.domain, abl.grid)
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
         u0 = ArrayPartition(values(abl.state)...)
-        prob = ODEProblem(rate!(abl), projection!(abl),
+        prob = ODEProblem(rate!(abl, log), projection!(abl),
                                       u0, (t1, t2), checkpoint = true)
-        reset!(log, t1) # removes samples from initial state and sets correct start time
+        Logging.reset!(log, t1) # removes samples from initial state and sets correct start time
     end
 
     # perform the full integration

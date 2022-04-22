@@ -1,19 +1,54 @@
 module State
 
+using ..CBD: readcbd
 using ..Domains: ABLDomain as Domain, x1range, x2range, x3range
 using ..Grids: StaggeredFourierGrid as Grid, NodeSet, nodes, vrange
 using ..PhysicalSpace: get_field, set_field!, default_size, h1range, h2range
 using ..BoundaryConditions: init_bcs, ConstantValue, layers_i2c
-using ..Processes: state_fields
 
-init_state(::Type{T}, grid, processes) where T =
-    NamedTuple(f => zeros(T, grid, nodes(f)) for f in state_fields(processes))
+init_state(::Type{T}, grid, fields) where T =
+    NamedTuple(f => zeros(T, grid, nodes(f)) for f in fields)
 
 function initialize!(state, domain, grid, physical_spaces; initial_conditions...)
     # TODO: consider setting all other fields to zero
     for (field, ic) in initial_conditions
         set_field!(ic, state[field], physical_spaces[default_size(grid)].transform,
                    domain, grid, nodes(field))
+    end
+end
+
+function initialize!(state, path, domain, grid, physical_spaces)
+    for field in keys(state)
+        fpath = joinpath(path, "$field.cbd")
+
+        if !isfile(fpath)
+            @warn "No initial values found for `$field`, set to zero."
+            state[field] .= 0
+            continue
+        end
+
+        # (xmin, xmax, x1, x2, x3, pfield)
+        cbd = readcbd(fpath, collect(x3range(domain, vrange(grid, nodes(field)))), grid.comm)
+
+        # ensure that file data is compatible with current simulation
+        xmin, xmax = extrema(domain)
+        @assert all(cbd[1] .≈ xmin)
+        @assert all(cbd[2] .≈ xmax)
+
+        x1, x2, x3 = cbd[3:5]
+        centered = (x1[1] != 0)
+
+        # check if x1- & x2-values are consistent
+        @assert all(x1 .≈ LinRange(xmin[1], xmax[1], 2*length(x1)+1)[(centered ? 2 : 1):2:end-1])
+        @assert all(x2 .≈ LinRange(xmin[2], xmax[2], 2*length(x2)+1)[(centered ? 2 : 1):2:end-1])
+
+        # TODO: allow interpolating x3-values
+        @assert all(cbd[5] .≈ x3range(domain, vrange(grid, nodes(field))))
+
+        # the snapshot might be any size, not just those with initialized transforms
+        pdims = size(cbd[end])[1:2]
+        transform = haskey(physical_spaces, pdims) ? physical_spaces[pdims].transform : Transform2D(T, pdims)
+        set_field!(state[field], transform, cbd[end], centered = centered)
     end
 end
 

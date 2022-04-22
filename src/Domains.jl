@@ -29,6 +29,18 @@ Base.size(domain::ABLDomain{T}, dim) where T = begin
     error("Invalid dimension `$dim`")
 end
 
+Base.extrema(domain::ABLDomain) = begin
+    x1min, x1max = extrema(domain, 1)
+    x2min, x2max = extrema(domain, 2)
+    x3min, x3max = extrema(domain, 3)
+    ((x1min, x2min, x3min), (x1max, x2max, x3max))
+end
+Base.extrema(domain::ABLDomain{T}, dim::Int) where T = begin
+    dim in (1,2) && return (zero(T), domain.hsize[dim])
+    dim == 3 && return convert.(T, domain.vmap.((zero(T), one(T))))
+    error("Invalid dimension `$dim`")
+end
+
 # use double precision by default
 ABLDomain(size, args...) = ABLDomain(Float64, size, args...)
 

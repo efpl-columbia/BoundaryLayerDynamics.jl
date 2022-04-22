@@ -17,7 +17,7 @@ show_output && println("Testing ABL.jl... ($(nproc == 1 ? "single process" : "$n
 
 # allow selecting individual tests through command-line arguments
 # (starting Julia 1.3, these can be passed using Pkg.test(..., test_args=``))
-tests = ["grid", "transform", "diffusion", "advection", "pressure", "ode", "laminar", "abl"]
+tests = ["grid", "transform", "diffusion", "advection", "pressure", "ode", "laminar", "output", "abl"]
 selection = filter(a -> !startswith(a, '-'), ARGS)
 if !isempty(selection) && selection != ["all"]
     filter!(t -> t in selection, tests)

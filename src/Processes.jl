@@ -12,23 +12,26 @@ using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, 
                             layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
 using ..Derivatives: second_derivatives, dx1factors, dx2factors, dx3factors
 using ..PhysicalSpace: physical_domain!, pdsize
+using ..Logging: process_samples!
 
-function compute_rates!(rate, state, t, processes, transforms, log = nothing)
+function compute_rates!(rates, state, t, processes, transforms, log = nothing)
 
     # set rate back to zero before adding terms
-    reset!(rate)
+    reset!(rates)
 
     # add linear terms in frequency domain
     for process in filter(islinear, processes)
-        add_rates!(rate, process, state, t, log)
+        add_rates!(rates, process, state, t, log)
     end
 
     # add nonlinear terms in physical domain
-    physical_domain!(rate, state, transforms) do rate, state
+    physical_domain!(rates, state, transforms) do prates, pstate
         for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
             # TODO: select correct size for each term
-            add_rates!(rate, process, state, t, log)
+            add_rates!(prates, process, pstate, t, log)
         end
+
+        process_samples!(log, t, state, pstate)
     end
 end
 

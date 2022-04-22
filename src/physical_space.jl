@@ -60,9 +60,10 @@ pdsize(grid, ::NodeSet{:I}, dealiasing) = (pdsize(grid, dealiasing)..., grid.n3i
 pdsize(grid, nodes::NodeSet) = pdsize(grid, nodes, nothing)
 
 # returns a range of rational ζ-values between 0 and 1
-h1range(grid, dealiasing) = LinRange(0//1, 1//1, pdsize(grid, dealiasing)[1]+1)[1:end-1]
-h2range(grid, dealiasing) = LinRange(0//1, 1//1, pdsize(grid, dealiasing)[2]+1)[1:end-1]
-
+h1range(pdims; centered = false) = LinRange(0//1, 1//1, 2*pdims[1]+1)[(centered ? 2 : 1):2:end-1]
+h2range(pdims; centered = false) = LinRange(0//1, 1//1, 2*pdims[2]+1)[(centered ? 2 : 1):2:end-1]
+h1range(grid, dealiasing; kwargs...) = h1range(pdsize(grid, dealiasing); kwargs...)
+h2range(grid, dealiasing; kwargs...) = h2range(pdsize(grid, dealiasing); kwargs...)
 
 # INITIALIZE & APPLY SETS OF TRANSFORMS --------------------
 
@@ -191,7 +192,7 @@ end
 
 # APPLYING FFTS --------------------------------------------
 
-function add_layer!(fdlayer, transform, pdlayer)
+function add_layer!(fdlayer, transform, pdlayer; centered = false)
     @assert size(pdlayer) == size(transform.pdbuffer)
 
     k1max = min(size(transform.fdbuffer, 1), size(fdlayer, 1)) - 1
@@ -200,30 +201,31 @@ function add_layer!(fdlayer, transform, pdlayer)
 
     transform.pdbuffer .= pdlayer
     mul!(transform.fdbuffer, transform.fwdplan, transform.pdbuffer)
+    centered && unshift!(transform.fdbuffer)
+
     fdlayer[1:k1max+1, 1:k2max+1] .+= transform.fdbuffer[1:k1max+1, 1:k2max+1] * fft_factor
     fdlayer[1:k1max+1, end-k2max+1:end] .+= transform.fdbuffer[1:k1max+1, end-k2max+1:end] * fft_factor
-
     fdlayer
 end
 
-function add_field!(fdfield, transform, pdfield)
+function add_field!(fdfield, transform, pdfield; kwargs...)
     for i3 = 1:size(fdfield, 3)
-        add_layer!(view(fdfield, :, :, i3), transform, view(pdfield, :, :, i3))
+        add_layer!(view(fdfield, :, :, i3), transform, view(pdfield, :, :, i3); kwargs...)
     end
     fdfield
 end
 
-function set_layer!(fdlayer, transform, pdlayer)
+function set_layer!(fdlayer, transform, pdlayer; kwargs...)
     fill!(fdlayer, 0)
-    add_layer!(fdlayer, transform, pdlayer)
+    add_layer!(fdlayer, transform, pdlayer; kwargs...)
 end
 
-function set_field!(fdfield, transform, pdfield)
+function set_field!(fdfield, transform, pdfield; kwargs...)
     fill!(fdfield, 0)
-    add_field!(fdfield, transform, pdfield)
+    add_field!(fdfield, transform, pdfield; kwargs...)
 end
 
-function set_field!(fn::Function, fdfield, transform, domain, grid, nodes)
+function set_field!(fn::Function, fdfield, transform, domain, grid, nodes; kwargs...)
     n = size(transform.pdbuffer)
     x1s = x1range(domain, h1range(grid, n))
     x2s = x2range(domain, h2range(grid, n))
@@ -231,7 +233,7 @@ function set_field!(fn::Function, fdfield, transform, domain, grid, nodes)
 
     for (i3, x3) = zip(1:size(fdfield, 3), x3s)
         values = (fn(x1, x2, x3) for x1=x1s, x2=x2s)
-        set_layer!(view(fdfield, :, :, i3), transform, values)
+        set_layer!(view(fdfield, :, :, i3), transform, values; kwargs...)
     end
     fdfield
 end
@@ -239,7 +241,8 @@ end
 set_field!(value::Real, fdfield, transform, domain, grid, nodes) =
     set_field!((x1, x2, x3) -> value, fdfield, transform, domain, grid, nodes)
 
-function get_layer!(pdlayer, transform, fdlayer, prefactors = ones(eltype(pdlayer), (1,1)))
+function get_layer!(pdlayer, transform, fdlayer, prefactors = ones(eltype(pdlayer), (1,1));
+        centered = false)
     @assert size(pdlayer) == size(transform.pdbuffer)
 
     k1max = min(size(transform.fdbuffer, 1), size(fdlayer, 1)) - 1
@@ -247,12 +250,11 @@ function get_layer!(pdlayer, transform, fdlayer, prefactors = ones(eltype(pdlaye
 
     @views transform.fdbuffer[1:k1max+1, 1:k2max+1] .= fdlayer[1:k1max+1, 1:k2max+1] .*
         prefactors[1:min(size(prefactors, 1), k1max+1), 1:min(size(prefactors, 2), k2max+1)]
-        #prefactors[1:min(size(prefactors, 1), k1max+1), 1:min(size(prefactors, 2), end-k2max+1):end]
     @views transform.fdbuffer[1:k1max+1, end-k2max+1:end] .= fdlayer[1:k1max+1, end-k2max+1:end] .*
         prefactors[1:min(size(prefactors, 1), k1max+1), max(1, end-k2max+1):end]
-        #prefactors[1:min(size(prefactors, 1), k1max+1), end+1-min(size(prefactors, 2), k2max):end]
     transform.fdbuffer[k1max+2:end, :] .= 0
     transform.fdbuffer[:, k2max+2:end-k2max] .= 0
+    centered && shift!(transform.fdbuffer)
 
     mul!(transform.pdbuffer, transform.bwdplan, transform.fdbuffer)
     pdlayer .= transform.pdbuffer
@@ -262,19 +264,37 @@ end
 Transform a field from the frequency domain to an extended set of nodes in the
 physical domain by adding extra frequencies set to zero.
 """
-function get_field!(pdfield, transform, fdfield, prefactors = ones(eltype(pdfield), (1,1,1)))
+function get_field!(pdfield, transform, fdfield, prefactors = ones(eltype(pdfield), (1,1,1));
+        kwargs...)
     for i3 = 1:equivalently(size(pdfield, 3), size(fdfield, 3))
         get_layer!(view(pdfield, :, :, i3), transform, view(fdfield, :, :, i3),
-                   view(prefactors, :, :, min(size(prefactors,3),i3)))
+                   view(prefactors, :, :, min(size(prefactors,3),i3)); kwargs...)
     end
     pdfield
 end
 
 # convenience function allocating a new array
-function get_field(transform::Transform2D{T}, fdfield) where T
+function get_field(transform::Transform2D{T}, fdfield; kwargs...) where T
     n1, n2 = size(transform.pdbuffer)
     n3 = size(fdfield, 3)
-    get_field!(zeros(T, n1, n2, n3), transform, fdfield)
+    get_field!(zeros(T, n1, n2, n3), transform, fdfield; kwargs...)
 end
+
+# shift a layer by half a grid point in frequency domain
+function shift!(layer, unshift=false) # e.g. size (9, 8) for psize (16, 8)
+    n1 = 2 * (size(layer, 1) - 1) # assumes even number of grid points
+    n2 = size(layer, 2)
+    prefactor = unshift ? -1im * π : 1im * π
+    for i1 = 1:size(layer, 1), i2 = 1:n2
+        # e.g. 0, 1, …, 8
+        k1 = i1 - 1
+        # treat nyquist frequency as negative wavenumber (usually zero anyway)
+        # e.g. 0, 1, 2, 3, -4, -3, -2, -1
+        k2 = 2*i2 > n2 ? i2 - n2 - 1 : i2 - 1
+        layer[i1, i2] *= exp(prefactor * (k1 / n1 + k2 / n2))
+    end
+end
+
+unshift!(layer) = shift!(layer, true)
 
 end # module PhysicalSpace

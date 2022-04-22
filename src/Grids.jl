@@ -44,8 +44,8 @@ function init_processes(comm)
     count = MPI.Comm_size(comm)
     # TODO: change to new interface when updating MPI.jl
     comm = MPI.Cart_create(comm, [count], [0], true)
-    rank = MPI.Comm_rank(comm)
-    comm, 1 + rank, count
+    coord = MPI.Cart_coords(comm)[] + 1 # convert to one-based coordinate
+    comm, coord, count
 end
 
 neighbors(grid::StaggeredFourierGrid, displacement = 1) =
