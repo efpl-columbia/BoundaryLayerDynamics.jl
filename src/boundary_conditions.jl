@@ -35,16 +35,20 @@ struct ConstantGradient{T}
     gradient::T
 end
 
-const DirichletBC = BoundaryCondition{ConstantValue}
-const NeumannBC = BoundaryCondition{ConstantGradient}
+const LowerBoundary{BC} = BoundaryCondition{BC,nothing,Na} where {Na}
+const UpperBoundary{BC} = BoundaryCondition{BC,Nb,nothing} where {Nb}
 
+struct DynamicValues{T}
+    values::Array{T,2}
+end
 
 # convert boundary conditions into concrete types
 init_bctype(::Type{T}, type::Symbol) where T = init_bctype(T, Val(type), zero(T))
-init_bctype(::Type{T}, type::Pair) where T = init_bctype(T, Val(first(type)), convert(T, last(type)))
-init_bctype(::Type{T}, ::Val{:dirichlet}, value::T) where T = ConstantValue(value)
-init_bctype(::Type{T}, ::Val{:neumann}, gradient::T) where T = ConstantGradient(gradient)
+init_bctype(::Type{T}, type::Pair) where T = init_bctype(T, Val(first(type)), last(type))
+init_bctype(::Type{T}, ::Val{:dirichlet}, value) where T = ConstantValue(convert(T, value))
+init_bctype(::Type{T}, ::Val{:neumann}, gradient) where T = ConstantGradient(convert(T, gradient))
 init_bctype(::Type{T}, ::Nothing) where T = nothing
+init_bctype(::Type{T}, ::Val{:dynamic}, dims::Tuple{Int,Int}) where T = DynamicValues(zeros(T, dims))
 
 
 function init_bcs(field, domain::Domain{T}, grid::Grid, opts...) where T

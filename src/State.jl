@@ -10,11 +10,19 @@ init_state(::Type{T}, grid, fields) where T =
     NamedTuple(f => zeros(T, grid, nodes(f)) for f in fields)
 
 function initialize!(state, domain, grid, physical_spaces; initial_conditions...)
-    # TODO: consider setting all other fields to zero
-    for (field, ic) in initial_conditions
-        set_field!(ic, state[field], physical_spaces[default_size(grid)].transform,
-                   domain, grid, nodes(field))
+    for field in keys(initial_conditions)
+        field in keys(state) || error("Cannot initialize `$field`: unknown field")
     end
+    for (field, values) in pairs(state)
+        if field in keys(initial_conditions)
+            set_field!(initial_conditions[field], values,
+                       physical_spaces[default_size(grid)].transform,
+                       domain, grid, nodes(field))
+        else
+            fill!(values, 0)
+        end
+    end
+    state
 end
 
 function initialize!(state, path, domain, grid, physical_spaces)

@@ -24,7 +24,7 @@ end
 
 Base.size(domain::ABLDomain) = Tuple(size(domain, i) for i=1:3)
 Base.size(domain::ABLDomain{T}, dim) where T = begin
-    dim in (1,2) && return hsize[dim]
+    dim in (1,2) && return domain.hsize[dim]
     dim == 3 && return convert(T, domain.vmap(one(T)) - domain.vmap(zero(T)))
     error("Invalid dimension `$dim`")
 end
@@ -113,6 +113,11 @@ x1range(domain::ABLDomain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) fo
 x2range(domain::ABLDomain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
 x3range(domain::ABLDomain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
 
+dx1factors(domain, wavenumbers::Tuple) = dx1factors(domain, wavenumbers[1])
+dx1factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π/domain.hsize[1]), (:, 1))
+dx2factors(domain, wavenumbers::Tuple) = dx2factors(domain, wavenumbers[2])
+dx2factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π/domain.hsize[2]), (1, :))
+
 # struct holding the information necessary to compute the jacobian of the
 # mapping from the simulation space [0,1]×[0,1]×[0,1] to the physical domain
 #struct DomainJacobian
@@ -141,6 +146,8 @@ end
 
 struct RoughWall
     roughness
+    von_karman_constant
+    RoughWall(z0, kappa = 0.4) = new(z0, kappa)
 end
 
 struct SmoothWall

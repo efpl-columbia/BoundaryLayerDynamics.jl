@@ -7,10 +7,12 @@ abstract type DiscretizedProcess end
 
 using ..Helpers
 using ..Grids: NodeSet, nodes, neighbors, wavenumbers, vrange
-using ..Domains: AbstractDomain as Domain, scalefactor
-using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, init_bcs, internal_bc,
+using ..Domains: AbstractDomain as Domain, scalefactor, SmoothWall, RoughWall, FreeSlipBoundary,
+                 x1range, x2range, x3range, dx1factors, dx2factors
+using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, DynamicValues,
+                            init_bcs, internal_bc,
                             layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
-using ..Derivatives: second_derivatives, dx1factors, dx2factors, dx3factors
+using ..Derivatives: second_derivatives, dx3factors, dx3_c2i!, dx3_i2c!
 using ..PhysicalSpace: physical_domain!, pdsize
 using ..Logging: process_samples!
 
@@ -27,7 +29,6 @@ function compute_rates!(rates, state, t, processes, transforms, log = nothing)
     # add nonlinear terms in physical domain
     physical_domain!(rates, state, transforms) do prates, pstate
         for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
-            # TODO: select correct size for each term
             add_rates!(prates, process, pstate, t, log)
         end
 
@@ -85,5 +86,6 @@ include("processes/momentum_advection.jl")
 include("processes/molecular_diffusion.jl")
 include("processes/pressure.jl")
 include("processes/sources.jl")
+include("processes/static_smagorinsky.jl")
 
 end

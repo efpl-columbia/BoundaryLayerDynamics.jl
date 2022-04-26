@@ -9,7 +9,8 @@ export DiscretizedABL, closedchannelflow, openchannelflow, incompressible_flow,
 export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, SinusoidalMapping
 
 # physical processes
-export MolecularDiffusion, MomentumAdvection, Pressure
+export MolecularDiffusion, MomentumAdvection, Pressure, ConstantSource, ConstantMean,
+    StaticSmagorinskyModel
 
 # ODE methods
 export Euler, AB2, SSPRK22, SSPRK33
@@ -93,11 +94,12 @@ function momentum_source(; constant_flux = nothing,
     error("No momentum source defined")
 end
 
-incompressible_flow(viscosity; kwargs...) = [
+incompressible_flow(viscosity; sgs_model = nothing, kwargs...) = [
     MomentumAdvection(),
     (MolecularDiffusion(vel, viscosity) for vel = (:vel1, :vel2, :vel3))...,
     Pressure(),
     momentum_source(; kwargs...)...,
+    (isnothing(sgs_model) ? () : (sgs_model,))...,
 ]
 
 function closedchannelflow(Re, dims; kwargs...)

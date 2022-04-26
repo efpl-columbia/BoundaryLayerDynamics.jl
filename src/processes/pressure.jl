@@ -214,8 +214,8 @@ function init_process(press::Pressure, domain::Domain{T}, grid) where T
 
     solver = DistributedBatchLDLt(T, dvs, evs, zeros(T, grid, NodeSet(:C)), press.batch_size, grid.comm)
 
-    derivatives = (D1 = dx1factors(domain, grid),
-                   D2 = dx2factors(domain, grid),
+    derivatives = (D1 = dx1factors(domain, wavenumbers(grid)),
+                   D2 = dx2factors(domain, wavenumbers(grid)),
                    D3c = dx3factors(domain, grid, NodeSet(:C)),
                    D3i = dx3factors(domain, grid, NodeSet(:I)))
     bcs = (vel3 = init_bcs(:vel3, domain, grid), p = internal_bc(domain, grid))

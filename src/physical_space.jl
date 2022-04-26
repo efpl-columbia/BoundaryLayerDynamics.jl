@@ -3,8 +3,8 @@ module PhysicalSpace
 using FFTW: FFTW
 using LinearAlgebra: mul!
 using ..Helpers
-using ..Grids: NodeSet, vrange, nodes
-using ..Domains: AbstractDomain as Domain, x1range, x2range, x3range
+using ..Grids: NodeSet, vrange, nodes, wavenumbers
+using ..Domains: AbstractDomain as Domain, x1range, x2range, x3range, dx1factors, dx2factors
 
 struct Transform2D{T,P1,P2}
     pdbuffer::Array{T,2}
@@ -23,14 +23,16 @@ end
 
 Base.size(transform::Transform2D, opts...) = size(transform.pdbuffer, opts...)
 
-struct Fields{T,S,R}
+struct Fields{T,S,R,D}
     transform::T
     terms::S
     rates::R
+    derivatives::D
 
-    function Fields(::Type{T}, dims, terms, rates) where T
+    function Fields(::Type{T}, dims, terms, rates, derivatives) where T
         transform = Transform2D(T, dims[1:2])
-        new{typeof(transform),typeof(terms),typeof(rates)}(transform, terms, rates)
+        Tr, S, R, D = typeof(transform), typeof(terms), typeof(rates), typeof(derivatives)
+        new{Tr,S,R,D}(transform, terms, rates, derivatives)
     end
 end
 
@@ -92,8 +94,11 @@ function init_physical_spaces((terms, rates), domain::Domain{T}, grid) where T
         push!(get!(fields, s, init()).rates, f)
     end
 
+    derivatives = (D1 = dx1factors(domain, wavenumbers(grid)),
+                   D2 = dx2factors(domain, wavenumbers(grid)))
     Dict(dims => Fields(T, dims, init_terms(unique(terms), domain, grid, dims),
-                                 init_rates(unique(rates), domain, grid, dims))
+                                 init_rates(unique(rates), domain, grid, dims),
+                                 derivatives)
          for (dims, (terms, rates)) in fields)
 end
 
@@ -121,7 +126,7 @@ function init_terms(fields::Vector{Symbol}, domain::Domain{T}, grid, dims; maxit
         # having the behavior depend on the order of the terms.
         term = init_term(Val(field), domain, grid, dims, terms)
         term = haskey(term, :default) ? default_term(Val(field), domain, grid, dims) : term
-        haskey(term, :dependencies) && push!(queue, term.dependencies)
+        haskey(term, :dependencies) && push!(queue, term.dependencies...)
 
         # prepend array that will hold the terms
         term = NamedTuple([:values => zeros(T, pdsize(grid, nodes(field), dims)),
@@ -156,7 +161,7 @@ function compute_terms!(pspace, state)
         # note: `compute_term!` takes the term in form of a NamedTuple but
         # returns the array with the values
         term = compute_term!(term, field, NamedTuple(psterms), state, pspace.transform)
-        term isa AbstractArray || error("`compute_term!` should return the computed values")
+        term isa AbstractArray || error("`compute_term!` should return the computed values for $field")
         push!(psterms, field => term)
     end
     NamedTuple(psterms)
@@ -168,7 +173,8 @@ compute_term!(term, field::Symbol, opts...) = compute_term!(term, Val(field), op
 
 # allow omitting last arguments when defining a new method
 init_term(field::Val, opts...) = init_term(field, opts[1:end-1]...)
-compute_term!(term, field::Val, opts...) = compute_term!(term, Val(field), opts[1:end-1]...)
+compute_term!(term, field::Val, opts...) = compute_term!(term, field, opts[1:end-1]...)
+compute_term!(term, field::Val) = error("Could not find method `compute_term!(term, $field)`")
 
 # default behavior is specified with a separate function that is defined in derivatives
 init_term(field::Val) = (default=true,)
@@ -183,16 +189,23 @@ function init_rates(rates::Vector{Symbol}, domain::Domain{T}, grid, dims) where 
 end
 
 function add_rates!(rates, pspaces)
-    # TODO: support layers with derivatives
     for (field, values) in pairs(pspaces.rates)
-        add_field!(rates[field], pspaces.transform, values)
+        if '_' in string(field)
+            f, d = split(string(field), '_')
+            diff = d == "1" ? pspaces.derivatives.D1 : d == "2" ? pspaces.derivatives.D2 :
+                    error("Invalid name for rates `$field`")
+            add_field!(rates[Symbol(f)], pspaces.transform, values, prefactors = diff)
+        else
+            add_field!(rates[field], pspaces.transform, values)
+        end
     end
     rates
 end
 
 # APPLYING FFTS --------------------------------------------
 
-function add_layer!(fdlayer, transform, pdlayer; centered = false)
+function add_layer!(fdlayer, transform, pdlayer; prefactors = ones(eltype(transform.pdbuffer), (1,1)),
+        centered = false)
     @assert size(pdlayer) == size(transform.pdbuffer)
 
     k1max = min(size(transform.fdbuffer, 1), size(fdlayer, 1)) - 1
@@ -203,14 +216,19 @@ function add_layer!(fdlayer, transform, pdlayer; centered = false)
     mul!(transform.fdbuffer, transform.fwdplan, transform.pdbuffer)
     centered && unshift!(transform.fdbuffer)
 
-    fdlayer[1:k1max+1, 1:k2max+1] .+= transform.fdbuffer[1:k1max+1, 1:k2max+1] * fft_factor
-    fdlayer[1:k1max+1, end-k2max+1:end] .+= transform.fdbuffer[1:k1max+1, end-k2max+1:end] * fft_factor
+    fdlayer[1:k1max+1, 1:k2max+1] .+= transform.fdbuffer[1:k1max+1, 1:k2max+1] .* fft_factor .*
+        prefactors[1:min(size(prefactors, 1), k1max+1), 1:min(size(prefactors, 2), k2max+1)]
+    fdlayer[1:k1max+1, end-k2max+1:end] .+= transform.fdbuffer[1:k1max+1, end-k2max+1:end] .* fft_factor .*
+        prefactors[1:min(size(prefactors, 1), k1max+1), max(1, end-k2max+1):end]
+
     fdlayer
 end
 
-function add_field!(fdfield, transform, pdfield; kwargs...)
+function add_field!(fdfield, transform, pdfield; prefactors = ones(eltype(transform.pdbuffer), (1,1,1)),
+        kwargs...)
     for i3 = 1:size(fdfield, 3)
-        add_layer!(view(fdfield, :, :, i3), transform, view(pdfield, :, :, i3); kwargs...)
+        add_layer!(view(fdfield, :, :, i3), transform, view(pdfield, :, :, i3),
+                   prefactors = view(prefactors, :, :, min(size(prefactors,3),i3)); kwargs...)
     end
     fdfield
 end
@@ -241,7 +259,7 @@ end
 set_field!(value::Real, fdfield, transform, domain, grid, nodes) =
     set_field!((x1, x2, x3) -> value, fdfield, transform, domain, grid, nodes)
 
-function get_layer!(pdlayer, transform, fdlayer, prefactors = ones(eltype(pdlayer), (1,1));
+function get_layer!(pdlayer, transform, fdlayer; prefactors = ones(eltype(pdlayer), (1,1)),
         centered = false)
     @assert size(pdlayer) == size(transform.pdbuffer)
 
@@ -264,11 +282,11 @@ end
 Transform a field from the frequency domain to an extended set of nodes in the
 physical domain by adding extra frequencies set to zero.
 """
-function get_field!(pdfield, transform, fdfield, prefactors = ones(eltype(pdfield), (1,1,1));
+function get_field!(pdfield, transform, fdfield; prefactors = ones(eltype(pdfield), (1,1,1)),
         kwargs...)
     for i3 = 1:equivalently(size(pdfield, 3), size(fdfield, 3))
         get_layer!(view(pdfield, :, :, i3), transform, view(fdfield, :, :, i3),
-                   view(prefactors, :, :, min(size(prefactors,3),i3)); kwargs...)
+                   prefactors = view(prefactors, :, :, min(size(prefactors,3),i3)); kwargs...)
     end
     pdfield
 end
