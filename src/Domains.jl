@@ -11,7 +11,8 @@ struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
     lower_boundary
     upper_boundary
 
-    function ABLDomain(::Type{T}, dims::Tuple, lower_boundary, upper_boundary, mapping = nothing) where T
+    function ABLDomain(::Type{T}, dims::Union{Tuple,AbstractArray},
+            lower_boundary, upper_boundary, mapping = nothing) where T
 
         l1, l2 = convert.(T, dims[1:2])
         l3 = length(dims) == 2 ? one(T) : dims[3]

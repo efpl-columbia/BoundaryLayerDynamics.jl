@@ -14,12 +14,13 @@ using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, 
                             layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
 using ..Derivatives: second_derivatives, dx3factors, dx3_c2i!, dx3_i2c!
 using ..PhysicalSpace: physical_domain!, pdsize
-using ..Logging: process_samples!
+using ..Logging: prepare_samples!, log_sample!, process_samples!
 
 function compute_rates!(rates, state, t, processes, transforms, log = nothing)
 
     # set rate back to zero before adding terms
     reset!(rates)
+    prepare_samples!(log, t)
 
     # add linear terms in frequency domain
     for process in filter(islinear, processes)

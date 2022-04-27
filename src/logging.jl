@@ -1,6 +1,7 @@
 module Logging
 
 using TimerOutputs: TimerOutput, @timeit
+using MPI: MPI
 using HDF5: HDF5
 using Printf
 using ..CBD: writecbd
@@ -11,19 +12,36 @@ using ..PhysicalSpace: Transform2D, get_field, default_size, h1range, h2range
 struct Log
     timer
     output
-    function Log(output, domain, grid)
+    function Log(output, domain, grid, t)
         timer = TimerOutput()
         output = map(output) do o
             kwargs = NamedTuple(k => o[k] for k in keys(o) if k != :output)
-            o.output(domain, grid; kwargs...)
+            o.output(domain, grid, t; kwargs...)
         end
         new(timer, output)
     end
 end
 
-reset!(log::Log, t) = log
+function reset!(log::Log, t)
+    @timeit "Output" begin
+        for output in log.output
+            reset!(output, t)
+        end
+    end
+end
+# default for output types and for log=nothing
+reset!(opts...) = nothing
 
-process_samples!(::Nothing, opts...) = nothing
+function flush!(log::Log)
+    @timeit "Output" begin
+        for output in log.output
+            flush!(output)
+        end
+    end
+end
+# default for output types and for log=nothing
+flush!(opts...) = error("TODO")
+
 function process_samples!(log::Log, t, state, pstate)
     @timeit "Output" begin
         for output in log.output
@@ -31,16 +49,180 @@ function process_samples!(log::Log, t, state, pstate)
         end
     end
 end
+# default for output types and for log=nothing
+process_samples!(opts...) = nothing
 
-struct MeanProfiles
-    args
-    MeanProfiles(domain, grid; kwargs...) = new(kwargs)
+function log_sample!(log::Log, sample, t)
+    @timeit "Output" begin
+        for output in log.output
+            log_sample!(output, sample, t)
+        end
+    end
+end
+# default for output types and for log=nothing
+log_sample!(opts...) = nothing
+
+
+function prepare_samples!(log::Log, t)
+    @timeit "Output" begin
+        for output in log.output
+            prepare_samples!(output, t)
+        end
+    end
+end
+# default for output types and for log=nothing
+prepare_samples!(opts...) = nothing
+
+
+struct MeanProfiles{T}
+    path
+    output_frequency
+    means::Dict{Symbol,Vector{T}}
+    samples::Dict{Symbol,Tuple{Vector{T},Ref{T}}}
+    timespan::Vector{T}
+    intervals::Ref{Int}
+    comm
+
+    function MeanProfiles(domain::Domain{T}, grid, t0;
+            profiles = nothing,
+            path = joinpath("output", "profiles"),
+            # TODO: support specfiying sample frequency
+            output_frequency = nothing) where T
+
+        profile(field) = zeros(T, length(vrange(grid, nodes(field))))
+        means = Dict(f => profile(f) for f in profiles)
+        samples = Dict(f => (profile(f), Ref(convert(T, NaN))) for f in profiles)
+
+        new{T}(path, output_frequency, means, samples, [t0, t0], Ref(0), grid.comm)
+    end
 end
 
-MeanProfiles(; kwargs...) = (output=MeanProfiles, kwargs...)
+MeanProfiles(profiles = (:vel1, :vel2, :vel3); kwargs...) = (output=MeanProfiles, profiles=profiles, kwargs...)
 
-function process_samples!(s::MeanProfiles, t, state, pstate)
-    # TODO
+function prepare_samples!(mp::MeanProfiles, t)
+    # add first half of trapezoidal integral
+    t > mp.timespan[end] || return # only add to mean when time is nonzero
+    weight = (t - mp.timespan[end]) / 2
+    for (field, (sample, timestamp)) in mp.samples
+        @assert timestamp[] == mp.timespan[end] || isnan(timestamp[]) "Sample for `$field` changed between sampling interval"
+        mp.means[field] .+= weight .* sample
+    end
+end
+
+function log_sample!(mp::MeanProfiles, (field, values)::Pair, t)
+    haskey(mp.samples, field) || return
+    sample, timestamp = mp.samples[field]
+    timestamp[] < t || isnan(timestamp[]) || return # avoid collecting same sample twice
+    if eltype(values) <: Real
+        weight = 1/prod(size(values)[1:2])
+        sample .= sum(values, dims=(1,2))[:] .* weight
+    else
+        sample .= view(values, 1, 1, :)
+    end
+    timestamp[] = t
+    mp
+end
+
+function process_samples!(mp::MeanProfiles, t, state, pstate)
+
+    # collect samples of frequency-space fields
+    for p in pairs(state)
+        log_sample!(mp, p, t)
+    end
+
+    # collect samples of physical-space fields
+    for (dims, state) in pstate
+        for p in pairs(state)
+            log_sample!(mp, p, t)
+        end
+    end
+
+    # add second half of trapezoidal integral
+    if t > mp.timespan[end] # only add to mean (and count intervals) when time is nonzero
+        weight = (t - mp.timespan[end]) / 2
+        for (field, (sample, timestamp)) in mp.samples
+            @assert timestamp[] == t "Sample missing for current time step"
+            mp.means[field] .+= weight .* sample
+        end
+        mp.timespan[end] = t
+        mp.intervals[] += 1
+    end
+
+    # return early if means should not be written to file yet
+    mp.timespan[1] == mp.timespan[end] && return # do not save for empty interval (e.g. at t=0)
+    t / mp.output_frequency ≈ round(Int, t / mp.output_frequency) || return
+
+    # write output
+    flush!(mp)
+    reset!(mp)
+end
+
+function flush!(mp::MeanProfiles{T}) where T
+
+    i = 0
+    fn = nothing
+    folder = dirname(mp.path)
+    prefix = basename(mp.path) * "-"
+    suffix = ".h5"
+    while isnothing(fn)
+        i += 1
+        fni = joinpath(folder, prefix * @sprintf("%02d", i) * suffix)
+        if !ispath(fni)
+            fn = fni
+        end
+    end
+
+    # gather data from all processes
+    metadata = Dict("intervals" => mp.intervals[], "timespan" => mp.timespan)
+    profiles = Dict()
+    for k in sort!(collect(keys(mp.means))) # MPI ranks must have same order
+        profile = gather_profile(mp.means[k], mp.comm)
+        isnothing(profile) && continue
+        dt = mp.timespan[2] - mp.timespan[1]
+        @assert dt > 0 "Time interval for averaging is not positive"
+        profile ./= dt
+        profiles[k] = profile
+    end
+
+    # write to file (one process only)
+    if isnothing(mp.comm) || MPI.Cart_coords(mp.comm)[] == 0
+        write_profiles(fn, profiles, metadata)
+    end
+    isnothing(mp.comm) || MPI.Barrier(mp.comm)
+end
+
+function reset!(mp::MeanProfiles)
+    mp.intervals[] = 0
+    mp.timespan[1] = mp.timespan[2]
+    for (field, mean) in mp.means
+        mean .= 0
+    end
+    mp
+end
+
+gather_profile(profile, ::Nothing) = profile[:]
+function gather_profile(profile, comm)
+    counts = MPI.Gather(Cint[length(profile)], 0, MPI.COMM_WORLD)
+    if MPI.Comm_rank(comm) == 0
+        global_profile = zeros(eltype(profile), sum(counts))
+        MPI.Gatherv!(profile, MPI.VBuffer(global_profile, counts), 0, comm)
+        global_profile
+    else
+        MPI.Gatherv!(profile, nothing, 0, comm)
+        nothing
+    end
+end
+
+function write_profiles(fn, profiles, metadata)
+    isfile(fn) && error("File `$fn` already exists")
+    HDF5.h5open(fn, "w") do h5
+        for (k, v) in metadata
+            HDF5.write_attribute(h5, k, v)
+        end
+        for (k, v) in profiles
+            HDF5.write_dataset(h5, string(k), v)
+        end
+    end
 end
 
 struct Snapshots{T}
@@ -52,7 +234,7 @@ struct Snapshots{T}
     comm
     centered::Bool
 
-    function Snapshots(domain::Domain{T}, grid;
+    function Snapshots(domain::Domain{T}, grid, t0;
             path = joinpath("output", "snapshots"),
             frequency = nothing,
             centered = true,

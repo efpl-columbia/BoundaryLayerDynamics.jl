@@ -130,30 +130,29 @@ projection!(abl::DiscretizedABL) = (s) -> begin
     apply_projections!(state, abl.processes)
 end
 
-function evolve!(abl::DiscretizedABL, tspan;
+function evolve!(abl::DiscretizedABL{T}, tspan;
         dt = nothing, method = SSPRK33(), output = (),
-        verbose = true)
+        verbose = true) where T
 
     # validate/normalize time arguments
     isnothing(dt) && ArgumentError("The keyword argument `dt` is mandatory")
     t1 = length(tspan) == 1 ? zero(first(tspan)) : first(tspan)
     t2 = last(tspan)
-    t1, t2, dt = promote(t1, t2, dt)
+    t1, t2, dt = convert.(T, (t1, t2, dt))
 
     # set up logging
-    log = Log(output, abl.domain, abl.grid)
+    log = Log(output, abl.domain, abl.grid, t1)
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
         u0 = ArrayPartition(values(abl.state)...)
         prob = ODEProblem(rate!(abl, log), projection!(abl),
                                       u0, (t1, t2), checkpoint = true)
-        Logging.reset!(log, t1) # removes samples from initial state and sets correct start time
     end
 
     # perform the full integration
     @timeit log.timer "Time integration" begin
-        solve!(prob, method, dt, checkpoints=dt:dt:t2)
+        solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
     end
 end
 
