@@ -1,4 +1,28 @@
-function test_velocity_log(; n=8)
+function test_all_log_fields(; n=4)
+
+    Random.seed!(8792991517) # same seed for each process
+
+    domain = Domain(rand(3), FreeSlipBoundary(), RoughWall(1e-4))
+    processes = incompressible_flow(1e-6, sgs_model=StaticSmagorinskyModel())
+    abl = DiscretizedABL((n,n,n), domain, processes)
+    dt = 1e-3
+
+    mktempdir_parallel() do dir
+
+        # save logs of all fields that should be supported
+        profiles = MeanProfiles((:vel1, :vel2, :vel3, :adv1, :adv2, :adv3,
+                                 :sgs11, :sgs12, :sgs13, :sgs22, :sgs23, :sgs33,
+                                ),
+                                output_frequency = 5*dt,
+                                path = joinpath(dir, "profiles"))
+        evolve!(abl, 10*dt, dt = dt, output = profiles)
+        @test true
+
+    end
+end
+
+
+function test_velocity_log(; n=4)
 
     Random.seed!(92719753017) # same seed for each process
     domain = Domain(rand(3), FreeSlipBoundary(), FreeSlipBoundary())
@@ -37,5 +61,6 @@ function test_velocity_log(; n=8)
 end
 
 @timeit "Logging" @testset "Logging Mean Statistics" begin
+    test_all_log_fields()
     test_velocity_log()
 end

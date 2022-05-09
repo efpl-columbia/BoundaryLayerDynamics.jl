@@ -108,13 +108,16 @@ function add_rates!(rates, term::DiscretizedStaticSmagorinskyModel, state, t, lo
 
     # τ11 and τ22 can be computed directly on C-nodes
     @. sgsc = 2 * evc * strain[1]
+    log_sample!(log, :sgs11 => sgsc, t)
     rates[:vel1_1] .+= sgsc
     @. sgsc = 2 * evc * strain[4]
+    log_sample!(log, :sgs22 => sgsc, t)
     rates[:vel2_2] .+= sgsc
 
     # τ33 is computed on C-nodes, and we can directly add dτ33/dx3 to the rates
     # TODO: consider writing a d/dx3 function that adds instead of overwriting
     @. sgsc = 2 * evc * strain[6]
+    log_sample!(log, :sgs33 => sgsc, t)
     dx3_c2i!(sgsi, sgsc, bcs.internal, term.derivatives.D3i)
     rates[:vel3] .+= sgsi
 
@@ -124,6 +127,7 @@ function add_rates!(rates, term::DiscretizedStaticSmagorinskyModel, state, t, lo
     # different RHS terms is probably worth more than saving this one FFT
     # TODO: consider checking if vel1_2 == vel2_1 when doing the transforms
     @. sgsc = 2 * evc * strain[2]
+    log_sample!(log, :sgs12 => sgsc, t)
     rates[:vel1_2] .+= sgsc
     rates[:vel2_1] .+= sgsc
 
@@ -133,6 +137,7 @@ function add_rates!(rates, term::DiscretizedStaticSmagorinskyModel, state, t, lo
     @. sgsi = 2 * evi * strain[3]
     rates[:vel3_1] .+= sgsi
     bcs13 = stress_bc.(bcs.wallstress, vel1_walls, vel2_walls, bcs.factors_stress, 1)
+    log_sample!(log, :sgs13 => sgsi, t, bcs = bcs13)
     dx3_i2c!(sgsc, sgsi, bcs13, term.derivatives.D3c)
     rates[:vel1] .+= sgsc
 
@@ -140,6 +145,7 @@ function add_rates!(rates, term::DiscretizedStaticSmagorinskyModel, state, t, lo
     @. sgsi = 2 * evi * strain[5]
     rates[:vel3_2] .+= sgsi
     bcs23 = stress_bc.(bcs.wallstress, vel1_walls, vel2_walls, bcs.factors_stress, 2)
+    log_sample!(log, :sgs23 => sgsi, t, bcs = bcs23)
     dx3_i2c!(sgsc, sgsi, bcs23, term.derivatives.D3c)
     rates[:vel2] .+= sgsc
 

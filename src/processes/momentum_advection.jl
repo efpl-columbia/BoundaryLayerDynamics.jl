@@ -5,16 +5,18 @@ struct MomentumAdvection <: ProcessDefinition
     MomentumAdvection(dealiasing = :quadratic) = new(dealiasing)
 end
 
-struct DiscretizedMomentumAdvection <: DiscretizedProcess
+struct DiscretizedMomentumAdvection{T} <: DiscretizedProcess
     dims::Tuple{Int,Int}
+    values::NTuple{2,Array{T,3}}
     boundary_conditions
 end
 
 function init_process(adv::MomentumAdvection, domain::Domain{T}, grid) where T
     # TODO: use internal BCs for vel1 & vel2
     dims = pdsize(grid, adv.dealiasing)
+    cvals, ivals = (zeros(T, pdsize(grid, NodeSet(ns), dims)) for ns in (:C, :I))
     bcs = Tuple(init_bcs(vel, domain, grid, dims) for vel = (:vel1, :vel2, :vel3))
-    DiscretizedMomentumAdvection(dims, bcs)
+    DiscretizedMomentumAdvection(dims, (cvals, ivals), bcs)
 end
 
 state_fields(::DiscretizedMomentumAdvection) = (:vel1, :vel2, :vel3)
@@ -29,16 +31,28 @@ function add_rates!(rates, term::DiscretizedMomentumAdvection, state, t, log)
     state, rates = state[term.dims], rates[term.dims]
     vel = layers.((state[:vel1], state[:vel2], state[:vel3]))
     vort = layers.((state[:vort1], state[:vort2], state[:vort3]))
-    rate = layers.((rates[:vel1], rates[:vel2], rates[:vel3]))
     lbc = last.(term.boundary_conditions)
     ubc = first.(term.boundary_conditions)
+    cvals, ivals = term.values
 
     # note: boundary conditions do not match velocity indices on purpose,
     # since the velocity BCs are used to derive boundary values for
     # velocity–vorticity products
-    add_adv1!(rate[1], vel[2], vort[2], vel[3], vort[3], lbc[1], ubc[1], lbc[3], ubc[3])
-    add_adv2!(rate[2], vel[1], vort[1], vel[3], vort[3], lbc[2], ubc[2], lbc[3], ubc[3])
-    add_adv3!(rate[3], vel[1], vort[1], vel[2], vort[2], ubc[1], ubc[2])
+
+    cvals .= 0
+    add_adv1!(layers(cvals), vel[2], vort[2], vel[3], vort[3], lbc[1], ubc[1], lbc[3], ubc[3])
+    log_sample!(log, :adv1 => cvals, t)
+    rates[:vel1] .+= cvals
+
+    cvals .= 0
+    add_adv2!(layers(cvals), vel[1], vort[1], vel[3], vort[3], lbc[2], ubc[2], lbc[3], ubc[3])
+    log_sample!(log, :adv2 => cvals, t)
+    rates[:vel2] .+= cvals
+
+    ivals .= 0
+    add_adv3!(layers(ivals), vel[1], vort[1], vel[2], vort[2], ubc[1], ubc[2])
+    log_sample!(log, :adv3 => ivals, t)
+    rates[:vel3] .+= ivals
 
     # compute smallest time scale for advection term (for CFL condition)
     #dt_adv = advective_timescale((upd, vpd, wpd), b.grid_spacing)

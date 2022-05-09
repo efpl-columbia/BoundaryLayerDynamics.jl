@@ -8,12 +8,16 @@ using ..CBD: writecbd
 using ..Domains: ABLDomain as Domain, x1range, x2range, x3range
 using ..Grids: NodeSet, nodes, vrange
 using ..PhysicalSpace: Transform2D, get_field, default_size, h1range, h2range
+using ..BoundaryConditions: ConstantValue, DynamicValues
 
 struct Log
     timer
     output
     function Log(output, domain, grid, t)
         timer = TimerOutput()
+        if !(output isa Union{Tuple,AbstractArray})
+            output = (output,)
+        end
         output = map(output) do o
             kwargs = NamedTuple(k => o[k] for k in keys(o) if k != :output)
             o.output(domain, grid, t; kwargs...)
@@ -52,15 +56,15 @@ end
 # default for output types and for log=nothing
 process_samples!(opts...) = nothing
 
-function log_sample!(log::Log, sample, t)
+function log_sample!(log::Log, sample, t; kwargs...)
     @timeit "Output" begin
         for output in log.output
-            log_sample!(output, sample, t)
+            log_sample!(output, sample, t; kwargs...)
         end
     end
 end
 # default for output types and for log=nothing
-log_sample!(opts...) = nothing
+log_sample!(opts...; kwargs...) = nothing
 
 
 function prepare_samples!(log::Log, t)
@@ -81,6 +85,7 @@ struct MeanProfiles{T}
     samples::Dict{Symbol,Tuple{Vector{T},Ref{T}}}
     timespan::Vector{T}
     intervals::Ref{Int}
+    boundaries::Tuple{Bool,Bool}
     comm
 
     function MeanProfiles(domain::Domain{T}, grid, t0;
@@ -89,11 +94,17 @@ struct MeanProfiles{T}
             # TODO: support specfiying sample frequency
             output_frequency = nothing) where T
 
-        profile(field) = zeros(T, length(vrange(grid, nodes(field))))
+        # for I-nodes, we also include the boundary-values in the profile (set
+        # to zero by default, i.e. if terms do not log the boundary conditions)
+        s, r = isnothing(grid.comm) ? (1, 1) : (MPI.Comm_size(grid.comm), MPI.Comm_rank(grid.comm) + 1)
+        boundaries = (r == 1, s == r)
+        vsize(ns) = length(vrange(grid, ns)) + (ns isa NodeSet{:I} ? sum(boundaries) : 0)
+        profile(field) = zeros(T, vsize(nodes(field)))
+
         means = Dict(f => profile(f) for f in profiles)
         samples = Dict(f => (profile(f), Ref(convert(T, NaN))) for f in profiles)
 
-        new{T}(path, output_frequency, means, samples, [t0, t0], Ref(0), grid.comm)
+        new{T}(path, output_frequency, means, samples, [t0, t0], Ref(0), boundaries, grid.comm)
     end
 end
 
@@ -109,19 +120,42 @@ function prepare_samples!(mp::MeanProfiles, t)
     end
 end
 
-function log_sample!(mp::MeanProfiles, (field, values)::Pair, t)
+function log_sample!(mp::MeanProfiles, (field, values)::Pair, t; bcs = nothing)
+
     haskey(mp.samples, field) || return
     sample, timestamp = mp.samples[field]
     timestamp[] < t || isnan(timestamp[]) || return # avoid collecting same sample twice
-    if eltype(values) <: Real
-        weight = 1/prod(size(values)[1:2])
-        sample .= sum(values, dims=(1,2))[:] .* weight
+
+    # save mean of data iniside computational domain
+    @assert values isa AbstractArray
+    i3s = if size(values, 3) == length(sample)
+        1:length(sample)
     else
-        sample .= view(values, 1, 1, :)
+        1+Int(mp.boundaries[1]):length(sample)-Int(mp.boundaries[2])
     end
+    for i3 = 1:length(i3s)
+        sample[i3s[i3]] = hmean(view(values, :, :, i3))
+    end
+
+    # also save boundary values if provided
+    if !isnothing(bcs)
+        lbc, ubc = bcs
+        if mp.boundaries[1]
+            sample[1] = hmean(lbc.type)
+        end
+        if mp.boundaries[end]
+            sample[end] = hmean(ubc.type)
+        end
+    end
+
     timestamp[] = t
     mp
 end
+
+hmean(values::AbstractArray) = eltype(values) <: Real ?
+    sum(values) / prod(size(values)) : real(values[1,1])
+hmean(bc::DynamicValues) = hmean(bc.values)
+hmean(bc::ConstantValue) = bc.value
 
 function process_samples!(mp::MeanProfiles, t, state, pstate)
 
