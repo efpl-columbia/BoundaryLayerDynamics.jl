@@ -30,7 +30,7 @@ include("derivatives.jl")
 include("Processes.jl")
 include("ODEMethods.jl")
 
-using .Helpers: Helpers
+using .Helpers: Helpers, sequentially
 using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for convenience in tessts
 using .PhysicalSpace: init_physical_spaces
 using .Processes
@@ -124,15 +124,15 @@ rate!(abl::DiscretizedABL, log = nothing) = (r, s, t; checkpoint = false) -> beg
 end
 
 # generate a function that performs the projection step of the current state
-projection!(abl::DiscretizedABL) = (s) -> begin
+projection!(abl::DiscretizedABL, log = nothing) = (s) -> begin
     fields = keys(abl.state)
     state = NamedTuple{fields}(s.x)
-    apply_projections!(state, abl.processes)
+    apply_projections!(state, abl.processes, log)
 end
 
 function evolve!(abl::DiscretizedABL{T}, tspan;
         dt = nothing, method = SSPRK33(), output = (),
-        verbose = true) where T
+        verbose = false) where T
 
     # validate/normalize time arguments
     isnothing(dt) && ArgumentError("The keyword argument `dt` is mandatory")
@@ -146,13 +146,19 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
         u0 = ArrayPartition(values(abl.state)...)
-        prob = ODEProblem(rate!(abl, log), projection!(abl),
+        prob = ODEProblem(rate!(abl, log), projection!(abl, log),
                                       u0, (t1, t2), checkpoint = true)
     end
 
     # perform the full integration
     @timeit log.timer "Time integration" begin
         solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
+    end
+
+    # print timing statistics to standard output
+    verbose && sequentially(abl.grid.comm) do
+        print_timer(log.timer)
+        println()
     end
 end
 

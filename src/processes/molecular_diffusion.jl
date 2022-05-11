@@ -13,6 +13,8 @@ struct DiscretizedMolecularDiffusion <: DiscretizedProcess
     nodes::NodeSet
 end
 
+Base.nameof(::DiscretizedMolecularDiffusion) = "Molecular Diffusion"
+
 function init_process(diff::MolecularDiffusion, domain::Domain{T}, grid) where T
     ns = nodes(diff.field)
     bcs = init_bcs(diff.field, domain, grid)

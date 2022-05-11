@@ -27,40 +27,32 @@ struct Log
 end
 
 function reset!(log::Log, t)
-    @timeit "Output" begin
-        for output in log.output
-            reset!(output, t)
-        end
+    @timeit log.timer "Output" for output in log.output
+        reset!(output, t)
     end
 end
 # default for output types and for log=nothing
 reset!(opts...) = nothing
 
 function flush!(log::Log)
-    @timeit "Output" begin
-        for output in log.output
-            flush!(output)
-        end
+    @timeit log.timer "Output" for output in log.output
+        flush!(output)
     end
 end
 # default for output types and for log=nothing
 flush!(opts...) = error("TODO")
 
 function process_samples!(log::Log, t, state, pstate)
-    @timeit "Output" begin
-        for output in log.output
-            process_samples!(output, t, state, pstate)
-        end
+    @timeit log.timer "Output" for output in log.output
+        process_samples!(output, t, state, pstate)
     end
 end
 # default for output types and for log=nothing
 process_samples!(opts...) = nothing
 
 function log_sample!(log::Log, sample, t; kwargs...)
-    @timeit "Output" begin
-        for output in log.output
-            log_sample!(output, sample, t; kwargs...)
-        end
+    @timeit log.timer "Output" for output in log.output
+        log_sample!(output, sample, t; kwargs...)
     end
 end
 # default for output types and for log=nothing
@@ -68,10 +60,8 @@ log_sample!(opts...; kwargs...) = nothing
 
 
 function prepare_samples!(log::Log, t)
-    @timeit "Output" begin
-        for output in log.output
-            prepare_samples!(output, t)
-        end
+    @timeit log.timer "Output" for output in log.output
+        prepare_samples!(output, t)
     end
 end
 # default for output types and for log=nothing

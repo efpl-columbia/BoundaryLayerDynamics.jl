@@ -192,6 +192,8 @@ struct DiscretizedPressure{T,D,BC,S} <: DiscretizedProcess
     solver::S
 end
 
+Base.nameof(::DiscretizedPressure) = "Pressure Solver"
+
 state_fields(::DiscretizedPressure) = (:vel1, :vel2, :vel3)
 
 function init_process(press::Pressure, domain::Domain{T}, grid) where T

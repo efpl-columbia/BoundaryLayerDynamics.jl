@@ -22,6 +22,8 @@ struct DiscretizedStaticSmagorinskyModel{T,B,D} <: DiscretizedProcess
     derivatives::D
 end
 
+Base.nameof(::DiscretizedStaticSmagorinskyModel) = "Static Smagorinsky SGS Model"
+
 state_fields(::DiscretizedStaticSmagorinskyModel) = (:vel1, :vel2, :vel3)
 physical_domain_terms(sgs::DiscretizedStaticSmagorinskyModel) =
     Tuple(f => sgs.dims for f in (:vel1_1, :vel2_2, :vel3_3, :strain12, :strain13, :strain23, :vel1, :vel2)) # vel1 & vel2 are needed for wall model

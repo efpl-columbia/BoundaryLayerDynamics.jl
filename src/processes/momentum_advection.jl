@@ -11,6 +11,8 @@ struct DiscretizedMomentumAdvection{T} <: DiscretizedProcess
     boundary_conditions
 end
 
+Base.nameof(::DiscretizedMomentumAdvection) = "Resolved Advection"
+
 function init_process(adv::MomentumAdvection, domain::Domain{T}, grid) where T
     # TODO: use internal BCs for vel1 & vel2
     dims = pdsize(grid, adv.dealiasing)

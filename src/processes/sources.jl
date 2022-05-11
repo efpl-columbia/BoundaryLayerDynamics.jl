@@ -11,6 +11,8 @@ struct DiscretizedConstantSource{T} <: DiscretizedProcess
     strength::T
 end
 
+Base.nameof(::DiscretizedConstantSource) = "Constant Source"
+
 function init_process(src::ConstantSource, domain::Domain{T}, grid) where T
     DiscretizedConstantSource(src.field, convert(T, src.strength))
 end
@@ -35,6 +37,8 @@ struct DiscretizedConstantMean{T,W,C} <: DiscretizedProcess
     weight::W
     comm::C
 end
+
+Base.nameof(::DiscretizedConstantMean) = "Constant Mean"
 
 function init_process(src::ConstantMean, domain::Domain{T}, grid) where T
     weight = 1 ./ dx3factors(domain, grid, nodes(src.field)) / size(domain, 3)

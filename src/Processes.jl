@@ -5,6 +5,7 @@ export init_process, state_fields, transformed_fields, islinear, compute_rates!,
 abstract type ProcessDefinition end
 abstract type DiscretizedProcess end
 
+using TimerOutputs: TimerOutputs, @timeit
 using ..Helpers
 using ..Grids: NodeSet, nodes, neighbors, wavenumbers, vrange
 using ..Domains: AbstractDomain as Domain, scalefactor, SmoothWall, RoughWall, FreeSlipBoundary,
@@ -18,19 +19,21 @@ using ..Logging: prepare_samples!, log_sample!, process_samples!
 
 function compute_rates!(rates, state, t, processes, transforms, log = nothing)
 
+    timer = isnothing(log) ? TimerOutputs.get_defaulttimer() : log.timer
+
     # set rate back to zero before adding terms
     reset!(rates)
     prepare_samples!(log, t)
 
     # add linear terms in frequency domain
-    for process in filter(islinear, processes)
-        add_rates!(rates, process, state, t, log)
+    @timeit timer "Linear Processes" for process in filter(islinear, processes)
+        @timeit timer nameof(process) add_rates!(rates, process, state, t, log)
     end
 
     # add nonlinear terms in physical domain
-    physical_domain!(rates, state, transforms) do prates, pstate
+    @timeit timer "Nonlinear Processes" physical_domain!(rates, state, transforms) do prates, pstate
         for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
-            add_rates!(prates, process, pstate, t, log)
+            @timeit timer nameof(process) add_rates!(prates, process, pstate, t, log)
         end
 
         process_samples!(log, t, state, pstate)
@@ -40,10 +43,13 @@ end
 # allow computing rates without specifying log argument
 add_rates!(rate, process, state, t) = add_rates!(rate, process, state, t, nothing)
 
-function apply_projections!(state, processes)
+function apply_projections!(state, processes, log = nothing)
+
+    timer = isnothing(log) ? TimerOutputs.get_defaulttimer() : log.timer
+
     # TODO: allow logging data from projection step
-    for process in filter(isprojection, processes)
-        apply_projection!(state, process)
+    @timeit timer "Projections" for process in filter(isprojection, processes)
+        @timeit timer nameof(process) apply_projection!(state, process)
     end
     state
 end
@@ -82,6 +88,9 @@ islinear(process) = isempty(physical_domain_terms(process)) && !isprojection(pro
 
 # by default, processes are not assumed to be projections
 isprojection(process) = false
+
+# derive name from type if not set
+Base.nameof(p::DiscretizedProcess) = string(nameof(typeof(p)))
 
 include("processes/momentum_advection.jl")
 include("processes/molecular_diffusion.jl")
