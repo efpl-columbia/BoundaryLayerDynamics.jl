@@ -216,9 +216,9 @@ function add_layer!(fdlayer, transform, pdlayer; prefactors = ones(eltype(transf
     mul!(transform.fdbuffer, transform.fwdplan, transform.pdbuffer)
     centered && unshift!(transform.fdbuffer)
 
-    fdlayer[1:k1max+1, 1:k2max+1] .+= transform.fdbuffer[1:k1max+1, 1:k2max+1] .* fft_factor .*
+    @views fdlayer[1:k1max+1, 1:k2max+1] .+= transform.fdbuffer[1:k1max+1, 1:k2max+1] .* fft_factor .*
         prefactors[1:min(size(prefactors, 1), k1max+1), 1:min(size(prefactors, 2), k2max+1)]
-    fdlayer[1:k1max+1, end-k2max+1:end] .+= transform.fdbuffer[1:k1max+1, end-k2max+1:end] .* fft_factor .*
+    @views fdlayer[1:k1max+1, end-k2max+1:end] .+= transform.fdbuffer[1:k1max+1, end-k2max+1:end] .* fft_factor .*
         prefactors[1:min(size(prefactors, 1), k1max+1), max(1, end-k2max+1):end]
 
     fdlayer
