@@ -3,9 +3,9 @@ module Logging
 using TimerOutputs: TimerOutput, @timeit
 using MPI: MPI
 using HDF5: HDF5
-using Printf
+using Printf, Dates
 using ..CBD: writecbd
-using ..Domains: ABLDomain as Domain, x1range, x2range, x3range
+using ..Domains: ABLDomain as Domain, x1range, x2range, x3range, scalefactor
 using ..Grids: NodeSet, nodes, vrange
 using ..PhysicalSpace: Transform2D, get_field, default_size, h1range, h2range
 using ..BoundaryConditions: ConstantValue, DynamicValues
@@ -13,14 +13,11 @@ using ..BoundaryConditions: ConstantValue, DynamicValues
 struct Log
     timer
     output
-    function Log(output, domain, grid, t)
+    function Log(output, domain, grid, tspan)
         timer = TimerOutput()
-        if !(output isa Union{Tuple,AbstractArray})
-            output = (output,)
-        end
         output = map(output) do o
             kwargs = NamedTuple(k => o[k] for k in keys(o) if k != :output)
-            o.output(domain, grid, t; kwargs...)
+            o.output(domain, grid, tspan; kwargs...)
         end
         new(timer, output)
     end
@@ -42,13 +39,13 @@ end
 # default for output types and for log=nothing
 flush!(opts...) = error("TODO")
 
-function process_samples!(log::Log, t, state, pstate)
+function process_log!(log::Log, rates, t)
     @timeit log.timer "Output" for output in log.output
-        process_samples!(output, t, state, pstate)
+        process_log!(output, rates, t)
     end
 end
 # default for output types and for log=nothing
-process_samples!(opts...) = nothing
+process_log!(opts...) = nothing
 
 function log_sample!(log::Log, sample, t; kwargs...)
     @timeit log.timer "Output" for output in log.output
@@ -58,6 +55,13 @@ end
 # default for output types and for log=nothing
 log_sample!(opts...; kwargs...) = nothing
 
+function log_state!(log::Log, state, t)
+    @timeit log.timer "Output" for output in log.output
+        log_state!(output, state, t)
+    end
+end
+# default for output types and for log=nothing
+log_state!(opts...) = nothing
 
 function prepare_samples!(log::Log, t)
     @timeit log.timer "Output" for output in log.output
@@ -66,6 +70,162 @@ function prepare_samples!(log::Log, t)
 end
 # default for output types and for log=nothing
 prepare_samples!(opts...) = nothing
+
+
+struct ProgressMonitor
+    range
+    frequency
+    description
+    timestamp
+    progress
+    remaining
+    showprogress
+    sampling
+    samples
+    prefactors
+    boundaries
+    comm
+
+    function ProgressMonitor(domain, grid, tspan;
+                             frequency = 10,
+                             description = "Progress:",
+                             tstep = nothing,
+                            )
+        showprogress = !MPI.Initialized() || MPI.Comm_rank(grid.comm) == 0
+        Δζ = 1 / grid.n3global
+        Δx3c = [Δζ / scalefactor(domain, 3, ζ) for ζ in vrange(grid, NodeSet(:C))]
+        Δx3i = [Δζ / scalefactor(domain, 3, ζ) for ζ in vrange(grid, NodeSet(:I))]
+        cweight = Δx3c / size(domain, 3)
+        iweight = Δx3i / size(domain, 3)
+        prefactors = Any[:cweight => cweight, :iweight => iweight, :Δx3i => Δx3i]
+        isnothing(tstep) || push!(prefactors, :tstep => tstep)
+        # wall stresses are only collected at the boundaries
+        # TODO: use cartesian coordinates here
+        s, r = isnothing(grid.comm) ? (1, 1) : (MPI.Comm_size(grid.comm), MPI.Comm_rank(grid.comm) + 1)
+        boundaries = (r == 1, s == r)
+        new(tspan, frequency, description, Ref(NaN), Ref(NaN), Ref(NaN), showprogress,
+            Ref(false), Pair[], NamedTuple(prefactors), boundaries, grid.comm)
+    end
+end
+
+ProgressMonitor(; kwargs...) = (output=ProgressMonitor, kwargs...)
+
+function prepare_samples!(pm::ProgressMonitor, t)
+
+    progress = (t - pm.range[1]) / (pm.range[2] - pm.range[1])
+    #pm.steps[] += 1 # TODO: measure time per step
+    now = time()
+
+    # decide whether to show progress on current step
+    pm.sampling[] = isnan(pm.timestamp[]) || (now - pm.timestamp[]) >= pm.frequency || progress == 1
+    MPI.Initialized() && MPI.Bcast!(pm.sampling, 0, pm.comm)
+    if !pm.sampling[]
+        pm.showprogress && (print('·'); flush(stdout))
+        return
+    end
+    pm.showprogress && println()
+
+    rate = (progress - pm.progress[]) / (now - pm.timestamp[])
+    pm.remaining[] = (1 - progress) / rate
+    pm.timestamp[] = now
+    pm.progress[] = progress
+
+    pm.sampling[] = true
+    empty!(pm.samples)
+    push!(pm.samples, "Simulation Time" => t)
+end
+
+function largest(field, state)
+    for dims in reverse(sort(collect(keys(state))))
+        haskey(state[dims], field) && return state[dims][field]
+    end
+    error("Could not find field `$field`")
+end
+
+global_maximum(x, comm) = MPI.Initialized() ? MPI.Reduce(maximum(x, init=-Inf), MPI.MAX, 0, comm) : maximum(x, init=-Inf)
+global_minimum(x, comm) = MPI.Initialized() ? MPI.Reduce(minimum(x, init=Inf), MPI.MIN, 0, comm) : minimum(x, init=Inf)
+global_sum(x, comm) = MPI.Initialized() ? MPI.Reduce(sum(x), MPI.SUM, 0, comm) : sum(x)
+
+function log_sample!(pm::ProgressMonitor, (field, values)::Pair, t; bcs = nothing)
+    pm.sampling[] || return
+    if field in (:sgs13, :sgs23)
+        bvals = Tuple(pm.boundaries[i] ? hmean(bcs[i].type) : zero(eltype(values)) for i=1:2)
+        bvals = global_sum.(bvals, (pm.comm,))
+        label = "Wall Stress τ$(field == :sgs13 ? '₁' : '₂')₃"
+        push!(pm.samples, label => bvals)
+    end
+end
+
+function log_state!(pm::ProgressMonitor, state::NamedTuple, t)
+    pm.sampling[] || return
+    vel1avg = global_sum(real(state.vel1[1,1,:]) .* pm.prefactors.cweight, pm.comm)
+    vel2avg = global_sum(real(state.vel2[1,1,:]) .* pm.prefactors.cweight, pm.comm)
+    # TODO: include boundary values in mean of vel3 (interpolate to C-nodes)
+    vel3avg = global_sum(real(state.vel3[1,1,:]) .* pm.prefactors.iweight, pm.comm)
+    push!(pm.samples, "Mean Velocity" => (vel1avg, vel2avg, vel3avg))
+end
+
+function log_state!(pm::ProgressMonitor, state::Dict, t)
+    pm.sampling[] || return
+
+    vel1 = largest(:vel1, state)
+    vel2 = largest(:vel2, state)
+    vel3 = largest(:vel3, state)
+
+    # TODO: add vertical component to energy terms
+    vel1avg = sum(vel1, dims=(1,2))[:] / prod(size(vel1)[1:2])
+    vel2avg = sum(vel2, dims=(1,2))[:] / prod(size(vel2)[1:2])
+    mke = vel1avg.^2 .+ vel2avg.^2
+
+    ke   = sum(abs2, vel1, dims=(1,2)) / prod(size(vel1)[1:2])
+    ke .+= sum(abs2, vel2, dims=(1,2)) / prod(size(vel2)[1:2])
+    tke = ke .- mke
+
+    push!(pm.samples, "Mean KE" => global_sum(mke, pm.comm))
+    push!(pm.samples, "Turbulent KE" => global_sum(tke, pm.comm))
+
+    dtmin = global_minimum(pm.prefactors.Δx3i ./ maximum(abs, vel3, dims=(1,2))[:], pm.comm)
+    if haskey(pm.prefactors, :tstep) && !isnothing(dtmin) # value only at root process
+        push!(pm.samples, "Adv. Courant Number" => pm.prefactors.tstep / dtmin)
+    else
+        push!(pm.samples, "Advective Timescale" => dtmin)
+    end
+
+end
+
+function process_log!(pm::ProgressMonitor, rates, t)
+    pm.sampling[] || return
+    pm.showprogress || return
+
+    eta = if isfinite(pm.remaining[])
+        eta = Second(ceil(pm.remaining[]))
+        Dates.format(Time(Nanosecond(eta)), "H:MM:SS")
+    else
+        "unknown"
+    end
+
+    L = 25
+    blocks = (' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█')
+
+    # prog to intervals
+    ip = round(Int, pm.progress[] * L * 8) # between 0 and 8*L
+    bar = prod(blocks[clamp(1+ip-is, 1:9)] for is = 0:8:8*L-1)
+    msg = string(pm.description, " ", @sprintf("%3.0f", 100 * pm.progress[]),
+                "%▕", bar, "▏ ETA: ", eta)
+    wt = length(msg)
+    println('─'^wt)
+    println(msg)
+
+    wl = maximum(length(k) for k in first.(pm.samples)) + 2
+    wr = wt - wl - 1
+    println('─'^wl, '┬', '─'^wr)
+    for (label, vals) in pm.samples
+        vals = join([@sprintf("%.3g", v) for v in vals], ", ")
+        println(lpad(label, wl-1), " ╎ ", vals)
+    end
+    println('─'^wl, '┴', '─'^wr)
+    flush(stdout)
+end
 
 
 struct MeanProfiles{T}
@@ -78,7 +238,7 @@ struct MeanProfiles{T}
     boundaries::Tuple{Bool,Bool}
     comm
 
-    function MeanProfiles(domain::Domain{T}, grid, t0;
+    function MeanProfiles(domain::Domain{T}, grid, tspan;
             profiles = nothing,
             path = joinpath("output", "profiles"),
             # TODO: support specfiying sample frequency
@@ -94,7 +254,9 @@ struct MeanProfiles{T}
         means = Dict(f => profile(f) for f in profiles)
         samples = Dict(f => (profile(f), Ref(convert(T, NaN))) for f in profiles)
 
-        new{T}(path, output_frequency, means, samples, [t0, t0], Ref(0), boundaries, grid.comm)
+        mkpath(dirname(path))
+        new{T}(path, output_frequency, means, samples, [first(tspan), first(tspan)],
+               Ref(0), boundaries, grid.comm)
     end
 end
 
@@ -147,19 +309,23 @@ hmean(values::AbstractArray) = eltype(values) <: Real ?
 hmean(bc::DynamicValues) = hmean(bc.values)
 hmean(bc::ConstantValue) = bc.value
 
-function process_samples!(mp::MeanProfiles, t, state, pstate)
-
+function log_state!(mp::MeanProfiles, state::NamedTuple, t)
     # collect samples of frequency-space fields
     for p in pairs(state)
         log_sample!(mp, p, t)
     end
+end
 
+function log_state!(mp::MeanProfiles, state::Dict, t)
     # collect samples of physical-space fields
-    for (dims, state) in pstate
+    for (dims, state) in state
         for p in pairs(state)
             log_sample!(mp, p, t)
         end
     end
+end
+
+function process_log!(mp::MeanProfiles, rates, t)
 
     # add second half of trapezoidal integral
     if t > mp.timespan[end] # only add to mean (and count intervals) when time is nonzero
@@ -258,7 +424,7 @@ struct Snapshots{T}
     comm
     centered::Bool
 
-    function Snapshots(domain::Domain{T}, grid, t0;
+    function Snapshots(domain::Domain{T}, grid, tspan;
             path = joinpath("output", "snapshots"),
             frequency = nothing,
             centered = true,
@@ -279,7 +445,9 @@ end
 
 Snapshots(; kwargs...) = (output=Snapshots, kwargs...)
 
-function process_samples!(snaps::Snapshots{Ts}, t, state, pstate) where Ts
+# only applies to frequency-space state
+function log_state!(snaps::Snapshots{Ts}, state::NamedTuple, t) where Ts
+
     # skip initial state, and only save at specified frequency, but allow for
     # floating-point imprecisions
     t == 0 && return

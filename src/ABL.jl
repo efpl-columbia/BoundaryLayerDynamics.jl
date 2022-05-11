@@ -38,10 +38,10 @@ using .Domains
 const Domain = ABLDomain
 using .State: State, init_state
 using .ODEMethods
-using .Logging: Logging, MeanProfiles, Snapshots, Log, process_samples!
+using .Logging: Logging, ProgressMonitor, MeanProfiles, Snapshots, Log
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
-using TimerOutputs: @timeit
+using TimerOutputs: @timeit, print_timer
 using RecursiveArrayTools: ArrayPartition
 
 struct DiscretizedABL{T,P}
@@ -120,7 +120,10 @@ rate!(abl::DiscretizedABL, log = nothing) = (r, s, t; checkpoint = false) -> beg
     fields = keys(abl.state)
     rates = NamedTuple{fields}(r.x)
     state = NamedTuple{fields}(s.x)
-    compute_rates!(rates, state, t, abl.processes, abl.physical_spaces, checkpoint ? log : nothing)
+    compute_rates!(rates, state, t, abl.processes, abl.physical_spaces, log, sample = checkpoint)
+    for (k, rate) in pairs(rates)
+        all(isfinite(val) for val in rate) || error("The simulation has diverged.")
+    end
 end
 
 # generate a function that performs the projection step of the current state
@@ -140,8 +143,10 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
     t2 = last(tspan)
     t1, t2, dt = convert.(T, (t1, t2, dt))
 
-    # set up logging
-    log = Log(output, abl.domain, abl.grid, t1)
+    # set up logging (wrap output in array if necessary)
+    output = [(verbose ? (ProgressMonitor(tstep = dt),) : ())...,
+              (output isa Union{Tuple,AbstractArray} ? output : (output,))...]
+    log = Log(output, abl.domain, abl.grid, (t1, t2))
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin

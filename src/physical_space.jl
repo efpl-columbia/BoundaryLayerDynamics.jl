@@ -79,7 +79,9 @@ function physical_domain!(add_psrates!, rates, state, pspaces)
     add_psrates!(psrates, psterms)
 
     # transform results back to physical domain
-    foldl(add_rates!, values(pspaces), init=rates)
+    for ps in values(pspaces)
+        add_rates!(rates, ps)
+    end
 end
 
 function init_physical_spaces((terms, rates), domain::Domain{T}, grid) where T

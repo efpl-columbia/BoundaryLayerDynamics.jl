@@ -15,15 +15,17 @@ using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, 
                             layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
 using ..Derivatives: second_derivatives, dx3factors, dx3_c2i!, dx3_i2c!
 using ..PhysicalSpace: physical_domain!, pdsize
-using ..Logging: prepare_samples!, log_sample!, process_samples!
+using ..Logging: prepare_samples!, log_sample!, log_state!, process_log!
 
-function compute_rates!(rates, state, t, processes, transforms, log = nothing)
+function compute_rates!(rates, state, t, processes, transforms, log = nothing; sample = !isnothing(log))
 
     timer = isnothing(log) ? TimerOutputs.get_defaulttimer() : log.timer
+    log = sample ? log : nothing
 
     # set rate back to zero before adding terms
     reset!(rates)
     prepare_samples!(log, t)
+    log_state!(log, state, t)
 
     # add linear terms in frequency domain
     @timeit timer "Linear Processes" for process in filter(islinear, processes)
@@ -31,13 +33,14 @@ function compute_rates!(rates, state, t, processes, transforms, log = nothing)
     end
 
     # add nonlinear terms in physical domain
-    @timeit timer "Nonlinear Processes" physical_domain!(rates, state, transforms) do prates, pstate
+    @timeit timer "Nonlinear Processes" physical_domain!(rates, state, transforms) do rates, state
+        log_state!(log, state, t)
         for process in filter(p -> !(islinear(p) || isprojection(p)), processes)
-            @timeit timer nameof(process) add_rates!(prates, process, pstate, t, log)
+            @timeit timer nameof(process) add_rates!(rates, process, state, t, log)
         end
-
-        process_samples!(log, t, state, pstate)
     end
+
+    process_log!(log, rates, t)
 end
 
 # allow computing rates without specifying log argument
