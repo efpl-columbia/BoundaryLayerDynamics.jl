@@ -9,7 +9,8 @@ using ..BoundaryConditions: init_bcs, ConstantValue, layers_i2c
 init_state(::Type{T}, grid, fields) where T =
     NamedTuple(f => zeros(T, grid, nodes(f)) for f in fields)
 
-function initialize!(state, domain, grid, physical_spaces; initial_conditions...)
+function initialize!(state, domain, grid, physical_spaces;
+                     add_noise = false, initial_conditions...)
     for field in keys(initial_conditions)
         field in keys(state) || error("Cannot initialize `$field`: unknown field")
     end
@@ -18,6 +19,7 @@ function initialize!(state, domain, grid, physical_spaces; initial_conditions...
             set_field!(initial_conditions[field], values,
                        physical_spaces[default_size(grid)].transform,
                        domain, grid, nodes(field))
+            add_noise && add_noise!(values)
         else
             fill!(values, 0)
         end
@@ -61,6 +63,17 @@ function initialize!(state, path, domain, grid, physical_spaces)
 end
 
 reset!(state) = (fill!.(values(state), 0); state)
+
+function add_noise!(vel::AbstractArray{Complex{T},3}, intensity::T = one(T) / 8) where T
+    intensity == 0 && return vel
+    for k=1:size(vel, 3)
+        σ = real(vel[1,1,k]) * intensity
+        for j=1:size(vel, 2), i=(j == 1 ? 2 : 1):size(vel, 1) # do not modify mean flow
+            vel[i,j,k] += σ * randn(Complex{T})
+        end
+    end
+    vel
+end
 
 function getterm(state, term, domain::Domain{T}, grid, physical_spaces, ns = nodes(term)) where T
     pdims = default_size(grid)
