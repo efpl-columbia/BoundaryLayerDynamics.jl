@@ -1,9 +1,10 @@
 module Logging
 
-using TimerOutputs: TimerOutput, @timeit
+using TimerOutputs: TimerOutput, @timeit, print_timer
 using MPI: MPI
 using HDF5: HDF5
 using Printf, Dates
+using ..Helpers: sequentially
 using ..CBD: writecbd
 using ..Domains: ABLDomain as Domain, x1range, x2range, x3range, scalefactor
 using ..Grids: NodeSet, nodes, vrange
@@ -13,13 +14,23 @@ using ..BoundaryConditions: ConstantValue, DynamicValues
 struct Log
     timer
     output
-    function Log(output, domain, grid, tspan)
+    comm
+    verbose
+    function Log(output, domain, grid, tspan; dt = nothing, verbose = false)
         timer = TimerOutput()
+        # add progress monitor and wrap output in array if necessary
+        output = [(verbose ? (ProgressMonitor(tstep = dt),) : ())...,
+                  (output isa Union{Tuple,AbstractArray} ? output : (output,))...]
+        # initialize all outputs
         output = map(output) do o
-            kwargs = NamedTuple(k => o[k] for k in keys(o) if k != :output)
-            o.output(domain, grid, tspan; kwargs...)
+            if o isa NamedTuple
+                kwargs = NamedTuple(k => o[k] for k in keys(o) if k != :output)
+                o.output(domain, grid, tspan; kwargs...)
+            else
+                o
+            end
         end
-        new(timer, output)
+        new(timer, output, grid.comm, verbose)
     end
 end
 
@@ -34,6 +45,10 @@ reset!(opts...) = nothing
 function flush!(log::Log)
     @timeit log.timer "Output" for output in log.output
         flush!(output)
+    end
+    log.verbose && sequentially(log.comm) do
+        print_timer(log.timer)
+        println()
     end
 end
 # default for output types and for log=nothing
@@ -70,6 +85,50 @@ function prepare_samples!(log::Log, t)
 end
 # default for output types and for log=nothing
 prepare_samples!(opts...) = nothing
+
+
+
+"""
+Collect time stamps every N steps to measure the compute time per time step.
+"""
+struct StepTimer
+    path::AbstractString
+    frequency::Int
+    step_counter::Ref{Int}
+    init_time::Float64
+    timestamps_wall::Vector{Float64}
+    timestamps_simulation::Vector{Float64}
+    write::Bool
+
+    function StepTimer(domain, grid, tspan; init_time = time(),
+            path = "output/timestamps.json", frequency = 1)
+        write = isnothing(grid.comm) || MPI.Comm_rank(grid.comm) == 0
+        new(path, frequency, Ref(-1), init_time, zeros(0), zeros(0), write)
+    end
+end
+
+StepTimer(; kwargs...) = (output=StepTimer, init_time=time(), kwargs...)
+
+function process_log!(log::StepTimer, _rates, t)
+    log.step_counter[] += 1
+    log.step_counter[] % log.frequency == 0 || return
+    push!(log.timestamps_wall, time())
+    push!(log.timestamps_simulation, t)
+end
+
+function flush!(log::StepTimer)
+    log.write || return
+    mkpath(dirname(log.path))
+    open(log.path, "w") do io
+        println(io, "{")
+        println(io, "  \"frequency\": ", log.frequency, ",")
+        println(io, "  \"wallTime\": [",
+                join(log.timestamps_wall .- log.init_time, ", "), "],")
+        println(io, "  \"simulationTime\": [",
+                join(log.timestamps_simulation, ", "), "]")
+        println(io, "}")
+    end
+end
 
 
 struct ProgressMonitor
@@ -349,33 +408,39 @@ end
 
 function flush!(mp::MeanProfiles{T}) where T
 
-    i = 0
-    fn = nothing
-    folder = dirname(mp.path)
-    prefix = basename(mp.path) * "-"
-    suffix = ".h5"
-    while isnothing(fn)
-        i += 1
-        fni = joinpath(folder, prefix * @sprintf("%02d", i) * suffix)
-        if !ispath(fni)
-            fn = fni
-        end
-    end
+    # since flush! is always called at the end of a simulation, it might be
+    # called twice in a row without new data
+    mp.intervals[] == 0 && return
 
     # gather data from all processes
     metadata = Dict("intervals" => mp.intervals[], "timespan" => mp.timespan)
     profiles = Dict()
+    dt = mp.timespan[2] - mp.timespan[1]
+    @assert dt > 0 "Time interval for averaging is not positive"
     for k in sort!(collect(keys(mp.means))) # MPI ranks must have same order
         profile = gather_profile(mp.means[k], mp.comm)
-        isnothing(profile) && continue
-        dt = mp.timespan[2] - mp.timespan[1]
-        @assert dt > 0 "Time interval for averaging is not positive"
+        isnothing(profile) && continue # profiles are only available on root process
         profile ./= dt
         profiles[k] = profile
     end
 
     # write to file (one process only)
     if isnothing(mp.comm) || MPI.Cart_coords(mp.comm)[] == 0
+
+        # determine next available file name
+        fn = nothing
+        folder = dirname(mp.path)
+        prefix = basename(mp.path) * "-"
+        suffix = ".h5"
+        i = 0
+        while isnothing(fn)
+            i += 1
+            fni = joinpath(folder, prefix * @sprintf("%02d", i) * suffix)
+            if !ispath(fni)
+                fn = fni
+            end
+        end
+
         write_profiles(fn, profiles, metadata)
     end
     isnothing(mp.comm) || MPI.Barrier(mp.comm)

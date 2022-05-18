@@ -30,7 +30,7 @@ include("derivatives.jl")
 include("Processes.jl")
 include("ODEMethods.jl")
 
-using .Helpers: Helpers, sequentially
+using .Helpers: Helpers
 using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for convenience in tessts
 using .PhysicalSpace: init_physical_spaces
 using .Processes
@@ -38,10 +38,10 @@ using .Domains
 const Domain = ABLDomain
 using .State: State, init_state
 using .ODEMethods
-using .Logging: Logging, ProgressMonitor, MeanProfiles, Snapshots, Log
+using .Logging: Logging, ProgressMonitor, MeanProfiles, Snapshots, Log, flush!
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
-using TimerOutputs: @timeit, print_timer
+using TimerOutputs: @timeit
 using RecursiveArrayTools: ArrayPartition
 
 struct DiscretizedABL{T,P}
@@ -143,10 +143,8 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
     t2 = last(tspan)
     t1, t2, dt = convert.(T, (t1, t2, dt))
 
-    # set up logging (wrap output in array if necessary)
-    output = [(verbose ? (ProgressMonitor(tstep = dt),) : ())...,
-              (output isa Union{Tuple,AbstractArray} ? output : (output,))...]
-    log = Log(output, abl.domain, abl.grid, (t1, t2))
+    # set up logging
+    log = Log(output, abl.domain, abl.grid, (t1, t2), dt = dt, verbose = verbose)
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
@@ -160,11 +158,8 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
         solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
     end
 
-    # print timing statistics to standard output
-    verbose && sequentially(abl.grid.comm) do
-        print_timer(log.timer)
-        println()
-    end
+    # write remaining output data
+    flush!(log)
 end
 
 
