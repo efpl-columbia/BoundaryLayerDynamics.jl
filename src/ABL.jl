@@ -108,8 +108,9 @@ function closedchannelflow(Re, dims; kwargs...)
     DiscretizedABL(dims, domain, processes)
 end
 
-function openchannelflow(Re, dims; kwargs...)
-    domain = Domain((4π, 2π, 1), SmoothWall(), FreeSlipBoundary())
+function openchannelflow(Re, dims; roughness_length = nothing, kwargs...)
+    wall = isnothing(roughness_length) ? SmoothWall() : RoughWall(roughness_length)
+    domain = Domain((4π, 2π, 1), wall, FreeSlipBoundary())
     processes = incompressible_flow(1/Re; kwargs...)
     DiscretizedABL(dims, domain, processes)
 end
