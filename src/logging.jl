@@ -52,7 +52,7 @@ function flush!(log::Log)
     end
 end
 # default for output types and for log=nothing
-flush!(opts...) = error("TODO")
+flush!(opts...) = nothing
 
 function process_log!(log::Log, rates, t)
     @timeit log.timer "Output" for output in log.output

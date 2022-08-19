@@ -261,6 +261,9 @@ end
 set_field!(value::Real, fdfield, transform, domain, grid, nodes) =
     set_field!((x1, x2, x3) -> value, fdfield, transform, domain, grid, nodes)
 
+set_field!(values::Array{T,3}, fdfield, transform, domain, grid, nodes) where T <: Real=
+    set_field!(fdfield, transform, values)
+
 function get_layer!(pdlayer, transform, fdlayer; prefactors = ones(eltype(pdlayer), (1,1)),
         centered = false)
     @assert size(pdlayer) == size(transform.pdbuffer)

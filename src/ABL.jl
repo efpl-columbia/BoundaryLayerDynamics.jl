@@ -156,7 +156,9 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
 
     # perform the full integration
     @timeit log.timer "Time integration" begin
-        solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
+        # allow skipping integration by setting tspan = 0,
+        # e.g. to compute RHS terms only
+        t1 < t2 && solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
     end
 
     # write remaining output data

@@ -97,7 +97,7 @@ end
 
 function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
         t = one(T), ν = one(T), δ = one(T), vel_bc = zero(T), f = zero(T),
-        dir = (one(T), zero(T)), η = nothing)
+        dir = (one(T), zero(T)), η = nothing, method = SSPRK33())
 
     dir = dir ./ sqrt(sum(dir.^2)) # normalize direction vector
     lbc = CustomBoundary(vel1 = :dirichlet => -vel_bc * dir[1],
@@ -108,12 +108,12 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
                          vel3 = :dirichlet)
     domain = Domain((1, 1, 2*δ), lbc, ubc, isnothing(η) ? nothing : SinusoidalMapping(η, :symmetric))
     abl = DiscretizedABL((Nh, Nh, Nv), domain, incompressible_flow(ν, constant_forcing = f .* dir))
-    evolve!(abl, t, dt = t / Nt, verbose = false)
+    evolve!(abl, t, dt = t / Nt, method = method, verbose = false)
 
     uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=coordinates(abl, :vel1, 3)]
     εu1 = abl[:vel1] .- uref * dir[1]
     εu2 = abl[:vel2] .- uref * dir[2]
-    εu3 = ABL.State.getterm(abl.state, :vel3, abl.domain, abl.grid, abl.physical_spaces, NS(:C))
+    εu3 = ABL.State.getterm(abl.state, :vel3, abl.domain, abl.grid, abl.physical_spaces, ABL.NodeSet(:C))
 
     # maximum relative error, based on global velocity to avoid division by zero
     sqrt(global_maximum(abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) / global_maximum(abs2.(uref)))
@@ -139,7 +139,7 @@ find a domain size for which the problem is periodic.
 """
 function taylor_green_vortex_error(T, Nh, Nv, Nt;
         t = one(T), ν = one(T), α = one(T), β = one(T), A = one(T),
-        dir = (zero(T), zero(T)), η = nothing)
+        dir = (zero(T), zero(T)), η = nothing, method = SSPRK33())
 
     λ = α / β
     B = - A * λ
@@ -166,7 +166,7 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
     abl = DiscretizedABL((Nh, Nh, Nv), Domain(ds, FreeSlipBoundary(), FreeSlipBoundary()),
                         incompressible_flow(ν, constant_forcing = (0,0)))
     initialize!(abl; ic...)
-    evolve!(abl, t, dt = t / Nt, verbose = false)
+    evolve!(abl, t, dt = t / Nt, method = method, verbose = false)
 
     xh = coordinates(abl, :vel1) # same for vel2
     xv = coordinates(abl, :vel3)
