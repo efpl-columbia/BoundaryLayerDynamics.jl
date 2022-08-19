@@ -66,7 +66,7 @@ function init_process(sgs::StaticSmagorinskyModel, domain::Domain{T}, grid) wher
     # need to be defined at the wall
     init_wall(boundary::RoughWall, dx3) = (BoundaryCondition(T, :dynamic => dims, grid, dims),
                                            1 / (2 * dx3 * log(dx3/boundary.roughness)),
-                                           boundary.von_karman_constant^2 / log(dx3/boundary.roughness)^2)
+                                           - boundary.von_karman_constant^2 / log(dx3/boundary.roughness)^2)
     init_wall(::FreeSlipBoundary, _) = (BoundaryCondition(T, :dirichlet => 0, grid, dims), 0, 0)
     init_wall(opts...) = error("SGS model only supports rough-wall and free-slip boundaries")
     dx3_below = first(x3range(domain, vrange(grid, NodeSet(:C))[1])) - extrema(domain, 3)[1]
@@ -109,47 +109,47 @@ function add_rates!(rates, term::DiscretizedStaticSmagorinskyModel, state, t, lo
     #broadcast!(νT, term.eddyviscosity_i, term.eddyviscosity_i, term.lengthscale_i)
 
     # τ11 and τ22 can be computed directly on C-nodes
-    @. sgsc = 2 * evc * strain[1]
+    @. sgsc = - 2 * evc * strain[1]
     log_sample!(log, :sgs11 => sgsc, t)
-    rates[:vel1_1] .+= sgsc
-    @. sgsc = 2 * evc * strain[4]
+    rates[:vel1_1] .-= sgsc
+    @. sgsc = - 2 * evc * strain[4]
     log_sample!(log, :sgs22 => sgsc, t)
-    rates[:vel2_2] .+= sgsc
+    rates[:vel2_2] .-= sgsc
 
     # τ33 is computed on C-nodes, and we can directly add dτ33/dx3 to the rates
     # TODO: consider writing a d/dx3 function that adds instead of overwriting
-    @. sgsc = 2 * evc * strain[6]
+    @. sgsc = - 2 * evc * strain[6]
     log_sample!(log, :sgs33 => sgsc, t)
     dx3_c2i!(sgsi, sgsc, bcs.internal, term.derivatives.D3i)
-    rates[:vel3] .+= sgsi
+    rates[:vel3] .-= sgsi
 
     # τ12==τ21 is required for both horizontal velocity components
     # NOTE: this could be transformed just once to save one FFT, but having
     # rates that are defined in a general way that can be used for many
     # different RHS terms is probably worth more than saving this one FFT
     # TODO: consider checking if vel1_2 == vel2_1 when doing the transforms
-    @. sgsc = 2 * evc * strain[2]
+    @. sgsc = - 2 * evc * strain[2]
     log_sample!(log, :sgs12 => sgsc, t)
-    rates[:vel1_2] .+= sgsc
-    rates[:vel2_1] .+= sgsc
+    rates[:vel1_2] .-= sgsc
+    rates[:vel2_1] .-= sgsc
 
     vel1_walls, vel2_walls = layers(state[:vel1])[[1,end]], layers(state[:vel2])[[1,end]]
 
     # τ13 is computed on I-nodes and needs the wall-model for the boundaries
-    @. sgsi = 2 * evi * strain[3]
-    rates[:vel3_1] .+= sgsi
+    @. sgsi = - 2 * evi * strain[3]
+    rates[:vel3_1] .-= sgsi
     bcs13 = stress_bc.(bcs.wallstress, vel1_walls, vel2_walls, bcs.factors_stress, 1)
     log_sample!(log, :sgs13 => sgsi, t, bcs = bcs13)
     dx3_i2c!(sgsc, sgsi, bcs13, term.derivatives.D3c)
-    rates[:vel1] .+= sgsc
+    rates[:vel1] .-= sgsc
 
     # τ23 is computed on I-nodes and needs the wall-model for the boundaries
-    @. sgsi = 2 * evi * strain[5]
-    rates[:vel3_2] .+= sgsi
+    @. sgsi = - 2 * evi * strain[5]
+    rates[:vel3_2] .-= sgsi
     bcs23 = stress_bc.(bcs.wallstress, vel1_walls, vel2_walls, bcs.factors_stress, 2)
     log_sample!(log, :sgs23 => sgsi, t, bcs = bcs23)
     dx3_i2c!(sgsc, sgsi, bcs23, term.derivatives.D3c)
-    rates[:vel2] .+= sgsc
+    rates[:vel2] .-= sgsc
 
     # TODO: check computation of time step restriction
     #dt_adv = advective_timescale(layers.(b.vel), b.grid_spacing)
