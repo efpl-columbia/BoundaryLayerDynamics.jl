@@ -88,20 +88,19 @@ function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = not
     end
 
     if variant == :symmetric
-        x3 = ζ -> convert(T, x3min + l * (1 + sin(η*(ζ-1)*π/2) / sin(η*π/2)))
-        Dx3 = ζ -> convert(T, l * (η*π/2) * (cos(η*(ζ-1)*π/2) / sin(η*π/2)))
-        x3, Dx3
+        x3 = ζ -> convert(T, x3min + l/2 * (1 + sin(η*(2*ζ-1)*π/2) / sin(η*π/2)))
+        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(2*ζ-1)*π/2))
     elseif variant == :below
-        m = (x3min + x3max) / 2
-        x3 = ζ -> convert(T, m + l/2 * (sin(η*(2*ζ-1)*π/2) / sin(η*π/2)))
-        Dx3 = ζ -> convert(T, l/2 * (2*η*π/2) * (cos(η*(-1 + 2*ζ)*π/2) / sin(η*π/2)))
-        x3, Dx3
+        x3 = ζ -> convert(T, x3min + l * (1 + sin(η*(ζ-1)*π/2) / sin(η*π/2)))
+        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(ζ-1)*π/2))
     elseif variant == :above
-        # TODO: add implementation
-        error("SinusoidalMapping at top of domain not yet implemented")
+        x3 = ζ -> convert(T, x3min + l * (sin(η*(ζ)*π/2) / sin(η*π/2)))
+        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(ζ)*π/2))
     else
         error("Unknown variant of SinusoidalMapping")
     end
+
+    x3, Dx3
 end
 
 instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T =
