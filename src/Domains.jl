@@ -15,8 +15,10 @@ struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
             lower_boundary, upper_boundary, mapping = nothing) where T
 
         l1, l2 = convert.(T, dims[1:2])
-        l3 = length(dims) == 2 ? one(T) : dims[3]
+        # l3 could be omitted, one value, or two values
+        l3 = length(dims) == 2 ? one(T) : convert.(T, dims[3])
 
+        # type of `l3` defines type of mapping
         x3, Dx3 = instantiate(mapping, l3, (lower_boundary, upper_boundary))
 
         new{T,typeof(x3),typeof(Dx3)}((l1, l2), x3, Dx3, lower_boundary, upper_boundary)
