@@ -4,6 +4,24 @@ export ABLDomain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, Cu
 
 abstract type AbstractDomain{T} end
 
+"""
+    Domain([T], dimensions, lower_boundary, upper_boundary, mapping = nothing)
+
+# Arguments
+
+- `T`: Type that is used for coordinates and flow data.
+- `dimensions`: Size of the domain, either as Tuple or AbstractArray. The third
+  dimension can be specified as a single value, in which case the domain is
+  assumed to start at ``x_3=0`` or as a tuple with the minimum and maximum
+  ``x_3`` values. If it is omitted, the default of ``x_3 ∈ [0,1]`` is assumed.
+- `lower_boundary`, `upper_boundary`: Boundary definitions.
+- `mapping`: A non-linear mapping from the interval ``[0,1]`` to the range of
+  ``x_3`` values, instead of the default linear mapping. The mapping can either
+  be specified as a tuple of two functions representing the mapping and its
+  derivative, or using the predefined [`SinusoidalMapping`](@ref). In the
+  former case, the third element of `dimensions` is ignored if specified; in
+  the latter case the mapping is adjusted to the domain size.
+"""
 struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
     hsize::Tuple{T,T}
     vmap::F1  # ζ ∈ [0,1] → x₃ ∈ physical domain
@@ -48,20 +66,24 @@ end
 ABLDomain(size, args...) = ABLDomain(Float64, size, args...)
 
 """
-    SinusoidalMapping(η)
+    SinusoidalMapping(η, variant = :auto)
 
-Define a transformed vertical coordinate with the mapping
+Define a transformed vertical coordinate with a mapping in the form of
 
-``x_3/δ = 1 + \\frac{sin(η (ζ-1) π/2)}{sin(η π/2)}``
+``x_3 = \\frac{sin(ζ η π/2)}{sin(η π/2)}``
 
-for a half-channel, where ``0≤ζ≤1``. For a full channel, the transformed grid
-is mirrored in the upper half.
+appropriately rescaled such that it maps the range ``0≤ζ≤1`` to the
+``x_3``-range of the [`Domain`](@ref).
 
 The parameter ``0<η<1`` controls the strength of the grid stretching, where
 values close to ``0`` result in a more equidistant spacing and values close to
 ``1`` result in a higher density of grid points close to the wall(s). The value
 ``η=1`` is not allowed since it produces a vanishing derivative of the mapping
 function at the wall.
+
+The `variant` defines at which of the boundaries the coordinates are refined
+and can be set to `:below`, `:above`, `:symmetric` (both boundaries refined),
+or `:auto` (refined for boundaries that produce a boundary-layer).
 """
 struct SinusoidalMapping
     parameter
