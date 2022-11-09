@@ -112,13 +112,13 @@ Base.zeros(T, grid, ::NodeSet{:C}) = zeros(Complex{T}, fdsize(grid)..., grid.n3c
 Base.zeros(T, grid, ::NodeSet{:I}) = zeros(Complex{T}, fdsize(grid)..., grid.n3i)
 
 # returns a range of rational ζ-values between 0 and 1
-function vrange(gd, ::NodeSet{:C}; neighbors=false) where T
+function vrange(gd, ::NodeSet{:C}; neighbors=false)
     ζ = LinRange(0//1, 1//1, 2*gd.n3global+1) # all ζ-values
     imin = 2*gd.i3min - (neighbors ? 1 : 0)
     imax = 2*gd.i3max + (neighbors ? 1 : 0)
     ζ[imin:2:imax]
 end
-function vrange(gd, ::NodeSet{:I}; neighbors=false) where T
+function vrange(gd, ::NodeSet{:I}; neighbors=false)
     ζ = LinRange(0//1, 1//1, 2*gd.n3global+1) # all ζ-values
     imin = 2*gd.i3min+1 - (neighbors ? 1 : 0)
     imax = 2*(gd.i3min+gd.n3i-1)+1 + (neighbors ? 1 : 0)
