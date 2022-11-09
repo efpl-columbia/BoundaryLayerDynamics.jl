@@ -98,7 +98,7 @@ end
 
 send_to_proc(data, proc, comm, tag=0) =
     MPI.Send(data, proc, tag, comm)
-get_from_proc!(data, proc, comm, tag=MPI.MPI_ANY_TAG) =
+get_from_proc!(data, proc, comm, tag=MPI.ANY_TAG) =
     MPI.Recv!(data, proc, tag, comm)
 
 function symthomas_batch_fwd!(b::AbstractArray{Tv,2},

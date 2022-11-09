@@ -53,7 +53,7 @@ neighbors(grid::StaggeredFourierGrid, displacement = 1) =
 function neighbors(comm, displacement = 1)
     isnothing(comm) && return (nothing, nothing)
     neighbors = MPI.Cart_shift(comm, 0, displacement)
-    Tuple(n == MPI.MPI_PROC_NULL ? nothing : n for n in neighbors)
+    Tuple(n == MPI.PROC_NULL ? nothing : n for n in neighbors)
 end
 
 wavenumbers(gd) = wavenumbers.((gd,), (1,2))
