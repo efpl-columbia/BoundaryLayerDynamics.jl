@@ -1,7 +1,7 @@
 module BoundaryConditions
 
 using MPI: MPI
-using ..Domains: ABLDomain as Domain, SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
+using ..Domains: Domain, SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
 using ..Grids: AbstractGrid as Grid, fdsize, neighbors
 using ..PhysicalSpace: pdsize
 

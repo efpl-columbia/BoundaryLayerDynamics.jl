@@ -6,12 +6,12 @@ function test_abl_setup()
 
     domain = Domain(L, RoughWall(1e-4), FreeSlipBoundary())
     processes = incompressible_flow(1/Re)
-    abl = DiscretizedABL(N, domain, incompressible_flow(Re))
+    abl = Model(N, domain, incompressible_flow(Re))
 
     io = IOBuffer()
     show(io, MIME("text/plain"), abl)
     @test String(take!(io)) == """
-        Discretized Atmospheric Boundary Layer:
+        BoundaryLayerDynamics.Model:
         → κ₁ ∈ [−31,31], κ₂ ∈ [−31,31], i₃ ∈ [1,64]"""
 end
 

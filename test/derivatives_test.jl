@@ -44,10 +44,10 @@ function test_vorticity_fs()
 
     dims = (12, 14, 4)
     domain = Domain((2*π, 2*π, 1.0), SmoothWall(), SmoothWall())
-    abl = DiscretizedABL(dims, domain, [Vorticity(vort3 = vort3)])
+    model = Model(dims, domain, [Vorticity(vort3 = vort3)])
 
-    initialize!(abl, vel2 = u0)
-    BLD.Processes.compute_rates!(deepcopy(abl.state), abl.state, 0.0, abl.processes, abl.physical_spaces)
+    initialize!(model, vel2 = u0)
+    BLD.Processes.compute_rates!(deepcopy(model.state), model.state, 0.0, model.processes, model.physical_spaces)
 
 end
 

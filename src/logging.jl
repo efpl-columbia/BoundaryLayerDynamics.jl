@@ -6,7 +6,7 @@ using HDF5: HDF5
 using Printf, Dates
 using ..Helpers: sequentially
 using ..CBD: writecbd
-using ..Domains: ABLDomain as Domain, x1range, x2range, x3range, scalefactor
+using ..Domains: Domain, x1range, x2range, x3range, scalefactor
 using ..Grids: NodeSet, nodes, vrange
 using ..PhysicalSpace: Transform2D, get_field, default_size, h1range, h2range
 using ..BoundaryConditions: ConstantValue, DynamicValues

@@ -107,13 +107,13 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
                          vel2 = :dirichlet => vel_bc * dir[2],
                          vel3 = :dirichlet)
     domain = Domain((1, 1, 2*δ), lbc, ubc, isnothing(η) ? nothing : SinusoidalMapping(η, :symmetric))
-    abl = DiscretizedABL((Nh, Nh, Nv), domain, incompressible_flow(ν, constant_forcing = f .* dir))
-    evolve!(abl, t, dt = t / Nt, method = method, verbose = false)
+    model = Model((Nh, Nh, Nv), domain, incompressible_flow(ν, constant_forcing = f .* dir))
+    evolve!(model, t, dt = t / Nt, method = method, verbose = false)
 
-    uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=coordinates(abl, :vel1, 3)]
-    εu1 = abl[:vel1] .- uref * dir[1]
-    εu2 = abl[:vel2] .- uref * dir[2]
-    εu3 = BoundaryLayerDynamics.State.getterm(abl.state, :vel3, abl.domain, abl.grid, abl.physical_spaces, BoundaryLayerDynamics.NodeSet(:C))
+    uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=coordinates(model, :vel1, 3)]
+    εu1 = model[:vel1] .- uref * dir[1]
+    εu2 = model[:vel2] .- uref * dir[2]
+    εu3 = BoundaryLayerDynamics.State.getterm(model.state, :vel3, model.domain, model.grid, model.physical_spaces, BoundaryLayerDynamics.NodeSet(:C))
 
     # maximum relative error, based on global velocity to avoid division by zero
     sqrt(global_maximum(abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) / global_maximum(abs2.(uref)))
@@ -163,20 +163,20 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
 
     ic = NamedTuple(vel => (x,y,z) -> uref(x,y,z,zero(T)) for (vel, uref) in
                     zip((:vel1, :vel2, :vel3), (u1ref, u2ref, u3ref)))
-    abl = DiscretizedABL((Nh, Nh, Nv), Domain(ds, FreeSlipBoundary(), FreeSlipBoundary()),
+    model = Model((Nh, Nh, Nv), Domain(ds, FreeSlipBoundary(), FreeSlipBoundary()),
                         incompressible_flow(ν, constant_forcing = (0,0)))
-    initialize!(abl; ic...)
-    evolve!(abl, t, dt = t / Nt, method = method, verbose = false)
+    initialize!(model; ic...)
+    evolve!(model, t, dt = t / Nt, method = method, verbose = false)
 
-    xh = coordinates(abl, :vel1) # same for vel2
-    xv = coordinates(abl, :vel3)
+    xh = coordinates(model, :vel1) # same for vel2
+    xv = coordinates(model, :vel3)
 
-    ε1 = abl[:vel1] .- T[u1ref(x...,t) for x=xh]
-    ε2 = abl[:vel2] .- T[u2ref(x...,t) for x=xh]
+    ε1 = model[:vel1] .- T[u1ref(x...,t) for x=xh]
+    ε2 = model[:vel2] .- T[u2ref(x...,t) for x=xh]
     # compute error before interpolation (bc3 works for error as well)
     # TODO: figure out why the error is not similar when first interpolating
     # and comparing values on I-nodes
-    ε3 = BoundaryLayerDynamics.State.interpolate(abl[:vel3] .- T[u3ref(x...,t) for x=xv], :vel3, abl.domain, abl.grid)
+    ε3 = BoundaryLayerDynamics.State.interpolate(model[:vel3] .- T[u3ref(x...,t) for x=xv], :vel3, model.domain, model.grid)
 
     # maximum relative error, based on global velocity to avoid divison by zero
     sqrt(global_maximum(abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) / global_maximum(

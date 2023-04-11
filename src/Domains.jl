@@ -1,6 +1,6 @@
 module Domains
 
-export ABLDomain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, x1range, x2range, x3range
+export Domain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, x1range, x2range, x3range
 
 abstract type AbstractDomain{T} end
 
@@ -22,14 +22,14 @@ abstract type AbstractDomain{T} end
   former case, the third element of `dimensions` is ignored if specified; in
   the latter case the mapping is adjusted to the domain size.
 """
-struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
+struct Domain{T,F1,F2} <: AbstractDomain{T}
     hsize::Tuple{T,T}
     vmap::F1  # ζ ∈ [0,1] → x₃ ∈ physical domain
     Dvmap::F2 # dx₃/dζ
     lower_boundary
     upper_boundary
 
-    function ABLDomain(::Type{T}, dims::Union{Tuple,AbstractArray},
+    function Domain(::Type{T}, dims::Union{Tuple,AbstractArray},
             lower_boundary, upper_boundary, mapping = nothing) where T
 
         l1, l2 = convert.(T, dims[1:2])
@@ -43,27 +43,27 @@ struct ABLDomain{T,F1,F2} <: AbstractDomain{T}
     end
 end
 
-Base.size(domain::ABLDomain) = Tuple(size(domain, i) for i=1:3)
-Base.size(domain::ABLDomain{T}, dim) where T = begin
+Base.size(domain::Domain) = Tuple(size(domain, i) for i=1:3)
+Base.size(domain::Domain{T}, dim) where T = begin
     dim in (1,2) && return domain.hsize[dim]
     dim == 3 && return convert(T, domain.vmap(one(T)) - domain.vmap(zero(T)))
     error("Invalid dimension `$dim`")
 end
 
-Base.extrema(domain::ABLDomain) = begin
+Base.extrema(domain::Domain) = begin
     x1min, x1max = extrema(domain, 1)
     x2min, x2max = extrema(domain, 2)
     x3min, x3max = extrema(domain, 3)
     ((x1min, x2min, x3min), (x1max, x2max, x3max))
 end
-Base.extrema(domain::ABLDomain{T}, dim::Int) where T = begin
+Base.extrema(domain::Domain{T}, dim::Int) where T = begin
     dim in (1,2) && return (zero(T), domain.hsize[dim])
     dim == 3 && return convert.(T, domain.vmap.((zero(T), one(T))))
     error("Invalid dimension `$dim`")
 end
 
 # use double precision by default
-ABLDomain(size, args...) = ABLDomain(Float64, size, args...)
+Domain(size, args...) = Domain(Float64, size, args...)
 
 """
     SinusoidalMapping(η, variant = :auto)
@@ -133,9 +133,9 @@ instantiate(m::Tuple{Function,Function}, (x3min, x3max)::Tuple{T,T}, bcs = nothi
 instantiate(mapping, L3::Real, bcs = nothing) = instantiate(mapping, (zero(L3), L3), bcs)
 
 # get physical coordinates from normalized domain positions ∈ [0,1]
-x1range(domain::ABLDomain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
-x2range(domain::ABLDomain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
-x3range(domain::ABLDomain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
+x1range(domain::Domain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
+x2range(domain::Domain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
+x3range(domain::Domain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
 
 dx1factors(domain, wavenumbers::Tuple) = dx1factors(domain, wavenumbers[1])
 dx1factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π/domain.hsize[1]), (:, 1))
@@ -155,13 +155,13 @@ Computes the constant coordinate scaling along dimension `dim`, i.e. 1/L
 where L is the domain size. This can only be computed for coordinates that are
 at most linearly transformed and will return an error otherwise.
 """
-function scalefactor(domain::ABLDomain, dim::Int)
+function scalefactor(domain::Domain, dim::Int)
     # TODO: support this for vertical directions if there is no transform in use
     dim == 1 ? 1/domain.hsize[1] : dim == 2 ? 1/domain.hsize[2] :
         error("Coordinates along dimension 3 might be transformed")
 end
 
-function scalefactor(domain::ABLDomain{T}, dim::Int, pos::Rational) where T
+function scalefactor(domain::Domain{T}, dim::Int, pos::Rational) where T
     # factors are constant along horizontal dimensions
     dim in (1, 2) && return scalefactor(domain, dim)
     dim == 3 && return convert(T, 1/domain.Dvmap(pos))

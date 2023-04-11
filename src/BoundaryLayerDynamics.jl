@@ -2,7 +2,7 @@ module BoundaryLayerDynamics
 __precompile__(false)
 
 # detail-oriented interface
-export DiscretizedABL, closedchannelflow, openchannelflow, incompressible_flow,
+export Model, closedchannelflow, openchannelflow, incompressible_flow,
     initialize!, reset!, evolve!, coordinates
 
 # domain and boundary conditions
@@ -35,7 +35,6 @@ using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for conveni
 using .PhysicalSpace: init_physical_spaces
 using .Processes
 using .Domains
-const Domain = ABLDomain
 using .State: State, init_state
 using .ODEMethods
 using .Logging: Logging, ProgressMonitor, MeanProfiles, Snapshots, Log, flush!
@@ -44,16 +43,14 @@ using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
 using TimerOutputs: @timeit
 using RecursiveArrayTools: ArrayPartition
 
-struct DiscretizedABL{T,P}
-    # TODO: decide on name
-    # e.g. DiscretizedABL, DiscretizedFlow, DiscretizedFlowSystem, DiscretizedSystem
+struct Model{T,P}
     domain
     grid
     state
     processes::P
     physical_spaces
 
-    function DiscretizedABL(modes, domain::Domain{T}, processes;
+    function Model(modes, domain::Domain{T}, processes;
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
         grid = Grid(modes, comm = comm)
         processes = [init_process(p, domain, grid) for p in processes]
@@ -65,22 +62,22 @@ struct DiscretizedABL{T,P}
 
 end
 
-function Base.show(io::IO, ::MIME"text/plain", abl::DiscretizedABL)
-    print(io, "Discretized Atmospheric Boundary Layer:\n")
-    print(io, "→ κ₁ ∈ [−$(abl.grid.k1max),$(abl.grid.k1max)]")
-    print(io, ", κ₂ ∈ [−$(abl.grid.k2max),$(abl.grid.k2max)]")
-    print(io, ", i₃ ∈ [1,$(abl.grid.n3global)]")
+function Base.show(io::IO, ::MIME"text/plain", model::Model)
+    print(io, "BoundaryLayerDynamics.Model:\n")
+    print(io, "→ κ₁ ∈ [−$(model.grid.k1max),$(model.grid.k1max)]")
+    print(io, ", κ₂ ∈ [−$(model.grid.k2max),$(model.grid.k2max)]")
+    print(io, ", i₃ ∈ [1,$(model.grid.n3global)]")
 end
 
-# convenience functions to interact with state through ABL struct
-initialize!(abl::DiscretizedABL; kwargs...) =
-    State.initialize!(abl.state, abl.domain, abl.grid, abl.physical_spaces; kwargs...)
-initialize!(abl::DiscretizedABL, path; kwargs...) =
-    State.initialize!(abl.state, path, abl.domain, abl.grid, abl.physical_spaces)
-reset!(abl::DiscretizedABL) = State.reset!(abl.state)
-Base.getindex(abl::DiscretizedABL, field::Symbol) =
-    State.getterm(abl.state, field, abl.domain, abl.grid, abl.physical_spaces)
-coordinates(abl::DiscretizedABL, opts...) = State.coordinates(abl.domain, abl.grid, opts...)
+# convenience functions to interact with state through Model struct
+initialize!(model::Model; kwargs...) =
+    State.initialize!(model.state, model.domain, model.grid, model.physical_spaces; kwargs...)
+initialize!(model::Model, path; kwargs...) =
+    State.initialize!(model.state, path, model.domain, model.grid, model.physical_spaces)
+reset!(model::Model) = State.reset!(model.state)
+Base.getindex(model::Model, field::Symbol) =
+    State.getterm(model.state, field, model.domain, model.grid, model.physical_spaces)
+coordinates(model::Model, opts...) = State.coordinates(model.domain, model.grid, opts...)
 
 function momentum_source(; constant_flux = nothing,
         constant_forcing = isnothing(constant_flux) ? 1 : nothing)
@@ -105,36 +102,36 @@ incompressible_flow(viscosity; sgs_model = nothing, kwargs...) = [
 function closedchannelflow(Re, dims; kwargs...)
     domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
     processes = incompressible_flow(1/Re; kwargs...)
-    DiscretizedABL(dims, domain, processes)
+    Model(dims, domain, processes)
 end
 
 function openchannelflow(Re, dims; roughness_length = nothing, kwargs...)
     wall = isnothing(roughness_length) ? SmoothWall() : RoughWall(roughness_length)
     domain = Domain((4π, 2π, 1), wall, FreeSlipBoundary())
     processes = incompressible_flow(1/Re; kwargs...)
-    DiscretizedABL(dims, domain, processes)
+    Model(dims, domain, processes)
 end
 
 # generate a function that performs the update of the rate
 # based on the current state
-rate!(abl::DiscretizedABL, log = nothing) = (r, s, t; checkpoint = false) -> begin
-    fields = keys(abl.state)
+rate!(model::Model, log = nothing) = (r, s, t; checkpoint = false) -> begin
+    fields = keys(model.state)
     rates = NamedTuple{fields}(r.x)
     state = NamedTuple{fields}(s.x)
-    compute_rates!(rates, state, t, abl.processes, abl.physical_spaces, log, sample = checkpoint)
+    compute_rates!(rates, state, t, model.processes, model.physical_spaces, log, sample = checkpoint)
     for (k, rate) in pairs(rates)
         all(isfinite(val) for val in rate) || error("The simulation has diverged.")
     end
 end
 
 # generate a function that performs the projection step of the current state
-projection!(abl::DiscretizedABL, log = nothing) = (s) -> begin
-    fields = keys(abl.state)
+projection!(model::Model, log = nothing) = (s) -> begin
+    fields = keys(model.state)
     state = NamedTuple{fields}(s.x)
-    apply_projections!(state, abl.processes, log)
+    apply_projections!(state, model.processes, log)
 end
 
-function evolve!(abl::DiscretizedABL{T}, tspan;
+function evolve!(model::Model{T}, tspan;
         dt = nothing, method = SSPRK33(), output = (),
         verbose = false) where T
 
@@ -145,12 +142,12 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
     t1, t2, dt = convert.(T, (t1, t2, dt))
 
     # set up logging
-    log = Log(output, abl.domain, abl.grid, (t1, t2), dt = dt, verbose = verbose)
+    log = Log(output, model.domain, model.grid, (t1, t2), dt = dt, verbose = verbose)
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
-        u0 = ArrayPartition(values(abl.state)...)
-        prob = ODEProblem(rate!(abl, log), projection!(abl, log),
+        u0 = ArrayPartition(values(model.state)...)
+        prob = ODEProblem(rate!(model, log), projection!(model, log),
                                       u0, (t1, t2), checkpoint = true)
     end
 

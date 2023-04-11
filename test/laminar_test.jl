@@ -58,19 +58,19 @@ function test_constant_flux_poiseuille(nz)
 
     # set up identical simulations for constant force & constant flux
     domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
-    abl1 = DiscretizedABL((4, 4, nz), domain, incompressible_flow(1.0, constant_forcing = 1))
-    abl2 = DiscretizedABL((4, 4, nz), domain, incompressible_flow(1.0, constant_flux = mf))
+    model1 = Model((4, 4, nz), domain, incompressible_flow(1.0, constant_forcing = 1))
+    model2 = Model((4, 4, nz), domain, incompressible_flow(1.0, constant_flux = mf))
 
     ε_constant_force = zeros(nit)
     ε_constant_flux  = zeros(nit)
-    ε(abl) = global_sum(abs.(abl.state[:vel1][1,1,:] .- u_exact[abl.grid.i3min:abl.grid.i3max])) / nz
+    ε(model) = global_sum(abs.(model.state[:vel1][1,1,:] .- u_exact[model.grid.i3min:model.grid.i3max])) / nz
 
     # run several segments of time integration, measuring errors inbetween
     for i=1:nit
-        evolve!(abl1, dt * nt, dt = dt, verbose = false)
-        ε_constant_force[i] = ε(abl1)
-        evolve!(abl2, dt * nt, dt = dt, verbose = false)
-        ε_constant_flux[i] = ε(abl2)
+        evolve!(model1, dt * nt, dt = dt, verbose = false)
+        ε_constant_force[i] = ε(model1)
+        evolve!(model2, dt * nt, dt = dt, verbose = false)
+        ε_constant_flux[i] = ε(model2)
     end
 
     # test that difference to steady-state solution is smaller than

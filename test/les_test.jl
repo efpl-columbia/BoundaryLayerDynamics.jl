@@ -10,13 +10,13 @@ function test_closed_channel_les(n)
 
     domain = Domain(ds, RoughWall(z0), RoughWall(z0))
     processes = [StaticSmagorinskyModel(wall_damping = false)]
-    abl = DiscretizedABL(gs, domain, processes)
-    rhs = deepcopy(abl.state)
+    model = Model(gs, domain, processes)
+    rhs = deepcopy(model.state)
 
     # compute advection term for constant velocity and check that advective
     # stress is equal to wall stress from wall model
-    initialize!(abl, vel1=ic[1], vel2=ic[2])
-    BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+    initialize!(model, vel1=ic[1], vel2=ic[2])
+    BLD.Processes.compute_rates!(rhs, model.state, 0.0, model.processes, model.physical_spaces)
 
     utot = sqrt(u1^2+u2^2)
     τw = 0.4^2 * utot^2 / log(ds[3]/n/2/z0)^2
@@ -25,16 +25,16 @@ function test_closed_channel_les(n)
 
     # compute advection term for linear velocity field
     dudz = 0.40595
-    initialize!(abl, vel1 = (x,y,z) -> (z-1) * dudz)
-    BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+    initialize!(model, vel1 = (x,y,z) -> (z-1) * dudz)
+    BLD.Processes.compute_rates!(rhs, model.state, 0.0, model.processes, model.physical_spaces)
 
     # check that eddy viscosity is correct
     S13 = S31 = 1/2 * (dudz + 0) # dw/dx == 0
     Stot = sqrt(2 * (S13^2 + S31^2)) # other entries of Sij are zero
     Δ = cbrt(prod(ds ./ gs))
     νT = (Δ * 0.1)^2 * Stot
-    @test global_vector(abl.processes[].eddyviscosity_c[1,1,:])[2:end-1] ≈ νT * ones(n-2) # top & bottom rely on boundary condition
-    @test global_vector(abl.processes[].eddyviscosity_i[1,1,:]) ≈ νT * ones(n-1)
+    @test global_vector(model.processes[].eddyviscosity_c[1,1,:])[2:end-1] ≈ νT * ones(n-2) # top & bottom rely on boundary condition
+    @test global_vector(model.processes[].eddyviscosity_i[1,1,:]) ≈ νT * ones(n-1)
 
     # check that the advection term is correct
     uw = (1-ds[3]/n/2)*dudz
@@ -47,7 +47,7 @@ function test_closed_channel_les(n)
     # check that integration runs without error
     dt = 1e-3
     nt = 10
-    evolve!(abl, dt * nt, dt = dt)
+    evolve!(model, dt * nt, dt = dt)
 end
 
 function test_open_channel_les(n)
@@ -61,13 +61,13 @@ function test_open_channel_les(n)
     domain = Domain(ds, RoughWall(z0), FreeSlipBoundary())
     processes = incompressible_flow(1/Re, constant_forcing = (1, 0),
                                     sgs_model = StaticSmagorinskyModel())
-    abl = DiscretizedABL((n, n, n), domain, processes)
-    initialize!(abl, vel1 = ic[1], vel2 = ic[2])
+    model = Model((n, n, n), domain, processes)
+    initialize!(model, vel1 = ic[1], vel2 = ic[2])
 
     # check that integration runs without error
     dt = 1e-3
     nt = 10
-    evolve!(abl, dt * nt, dt = dt)
+    evolve!(model, dt * nt, dt = dt)
 end
 
 test_closed_channel_les(16)

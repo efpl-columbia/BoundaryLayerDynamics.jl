@@ -49,29 +49,29 @@ function test_pressure_solver(N)
     lbc = CustomBoundary(vel1 = :dirchlet, vel2 = :dirichlet, vel3 = :dirichlet => bc3)
     ubc = deepcopy(lbc)
     domain = Domain(domain_size, lbc, ubc)
-    abl = DiscretizedABL(dims, domain, [Pressure()])
-    rhs = deepcopy(abl.state)
+    model = Model(dims, domain, [Pressure()])
+    rhs = deepcopy(model.state)
 
-    for u in values(abl.state)
+    for u in values(model.state)
         map!(x->rand(eltype(u)), u, u)
     end
 
     # check pressure in u-direction
-    initialize!(abl, vel1 = (x,y,z) -> 1 + sin(x), vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
-    BLD.Processes.apply_projections!(abl.state, abl.processes)
-    u_pd = abl[:vel1]
+    initialize!(model, vel1 = (x,y,z) -> 1 + sin(x), vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
+    BLD.Processes.apply_projections!(model.state, model.processes)
+    u_pd = model[:vel1]
     @test u_pd ≈ ones(T, size(u_pd))
 
     # check pressure in v-direction
-    initialize!(abl, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 1 + sin(y), vel3 = (x,y,z) -> 0)
-    BLD.Processes.apply_projections!(abl.state, abl.processes)
-    v_pd = abl[:vel2]
+    initialize!(model, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 1 + sin(y), vel3 = (x,y,z) -> 0)
+    BLD.Processes.apply_projections!(model.state, model.processes)
+    v_pd = model[:vel2]
     @test v_pd ≈ ones(T, size(v_pd))
 
     # check pressure in w-direction
-    initialize!(abl, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
-    BLD.Processes.apply_projections!(abl.state, abl.processes)
-    w_pd = abl[:vel3]
+    initialize!(model, vel1 = (x,y,z) -> 0, vel2 = (x,y,z) -> 0, vel3 = (x,y,z) -> 0)
+    BLD.Processes.apply_projections!(model.state, model.processes)
+    w_pd = model[:vel3]
     @test w_pd ≈ bc3 * ones(T, size(w_pd))
 end
 

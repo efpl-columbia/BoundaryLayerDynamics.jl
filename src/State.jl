@@ -1,7 +1,7 @@
 module State
 
 using ..CBD: readcbd
-using ..Domains: ABLDomain as Domain, x1range, x2range, x3range
+using ..Domains: Domain, x1range, x2range, x3range
 using ..Grids: StaggeredFourierGrid as Grid, NodeSet, nodes, vrange
 using ..PhysicalSpace: get_field, set_field!, default_size, h1range, h2range
 using ..BoundaryConditions: init_bcs, ConstantValue, layers_i2c

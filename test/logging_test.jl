@@ -4,7 +4,7 @@ function test_all_log_fields(; n=4)
 
     domain = Domain(rand(3), FreeSlipBoundary(), RoughWall(1e-4))
     processes = incompressible_flow(1e-6, sgs_model=StaticSmagorinskyModel())
-    abl = DiscretizedABL((n,n,n), domain, processes)
+    model = Model((n,n,n), domain, processes)
     dt = 1e-3
 
     mktempdir_parallel() do dir
@@ -15,7 +15,7 @@ function test_all_log_fields(; n=4)
                                 ),
                                 output_frequency = 5*dt,
                                 path = joinpath(dir, "profiles"))
-        evolve!(abl, 10*dt, dt = dt, output = profiles)
+        evolve!(model, 10*dt, dt = dt, output = profiles)
         @test true
 
     end
@@ -28,8 +28,8 @@ function test_velocity_log(; n=4)
     domain = Domain(rand(3), FreeSlipBoundary(), FreeSlipBoundary())
     u1, u2, f1, f2 = rand(4)
     processes = [ConstantSource(:vel1, f1), ConstantSource(:vel2, f2)]
-    abl = DiscretizedABL((n, n, n), domain, processes)
-    initialize!(abl, vel1=(x,y,z)->u1, vel2=(x,y,z)->u2)
+    model = Model((n, n, n), domain, processes)
+    initialize!(model, vel1=(x,y,z)->u1, vel2=(x,y,z)->u2)
     tspan = rand() .* [1, 2] # integrate in [T, 2T], with random T
 
     mktempdir_parallel() do dir
@@ -37,7 +37,7 @@ function test_velocity_log(; n=4)
         profiles = MeanProfiles((:vel1, :vel2),
                                 output_frequency = diff(tspan)[]/2,
                                 path = joinpath(dir, "profiles"))
-        evolve!(abl, tspan, dt = diff(tspan)[] / 10, output = [profiles])
+        evolve!(model, tspan, dt = diff(tspan)[] / 10, output = [profiles])
         @test length(readdir(dir)) == 2
 
         # first profiles: mean from t=0 to t=tmax/2
