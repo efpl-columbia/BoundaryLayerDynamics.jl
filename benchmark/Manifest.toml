@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-[[ABL]]
+[[BoundaryLayerDynamics]]
 deps = ["Dates", "FFTW", "HDF5", "JSON", "LinearAlgebra", "MPI", "Printf", "RecursiveArrayTools", "TimerOutputs"]
 path = ".."
 uuid = "9d12ad70-aa0c-11e8-0216-810054b526d2"

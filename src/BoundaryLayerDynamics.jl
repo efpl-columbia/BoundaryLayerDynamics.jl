@@ -1,4 +1,4 @@
-module ABL
+module BoundaryLayerDynamics
 __precompile__(false)
 
 # detail-oriented interface
@@ -166,4 +166,4 @@ function evolve!(abl::DiscretizedABL{T}, tspan;
 end
 
 
-end # module ABL
+end # module BoundaryLayerDynamics

@@ -1,5 +1,6 @@
-using ABL, Test
-const NS = ABL.Grids.NodeSet # for convenience
+using BoundaryLayerDynamics, Test
+const BLD = BoundaryLayerDynamics
+const NS = BLD.Grids.NodeSet # for convenience
 
 using MPI: MPI
 using HDF5: HDF5
@@ -14,7 +15,7 @@ const serial = "--no-mpi" in ARGS
 parallel && MPI.Init()
 const nproc = parallel ? MPI.Comm_size(MPI.COMM_WORLD) : 1
 const show_output = parallel ? MPI.Comm_rank(MPI.COMM_WORLD) == 0 : true
-show_output && println("Testing ABL.jl... ($(nproc == 1 ? "single process" : "$nproc processes"))")
+show_output && println("Testing BoundaryLayerDynamics.jl... ($(nproc == 1 ? "single process" : "$nproc processes"))")
 
 # allow selecting individual tests through command-line arguments
 # (starting Julia 1.3, these can be passed using Pkg.test(..., test_args=``))
@@ -25,7 +26,7 @@ if !isempty(selection) && selection != ["all"]
     filter!(t -> t in selection, tests)
 end
 
-@timeit "ABL.jl Tests" @testset MPITestSet "Atmospheric Boundary Layer Simulations" begin
+@timeit "BoundaryLayerDynamics.jl Tests" @testset MPITestSet "Atmospheric Boundary Layer Simulations" begin
     for test in tests
         include("$(test)_test.jl")
     end

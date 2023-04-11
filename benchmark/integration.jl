@@ -6,7 +6,7 @@ push!(LOAD_PATH, "@", "@stdlib")
 const STEPS = 1000
 const FREQUENCY = 10
 
-using ABL, MPI
+using BoundaryLayerDynamics, MPI
 MPI.Init()
 
 # set up different combinations of horizontal/vertical resolutions
@@ -31,7 +31,7 @@ function time_integration(variant, nh, nv)
 
     dt = 1e-12
     evolve!(abl, STEPS * dt, dt = dt, method = AB2(),
-            output = ABL.Logging.StepTimer(path = path; frequency = FREQUENCY))
+            output = BoundaryLayerDynamics.Logging.StepTimer(path = path; frequency = FREQUENCY))
 end
 
 for variant in (:les, :dns), (nh, nv) in resolutions

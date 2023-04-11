@@ -13,7 +13,7 @@ function test_advection_exact(NZ)
     dims = (12, 14, NZ)
     domain = Domain((2*π, 2*π, 1.0), SmoothWall(), SmoothWall())
     abl = DiscretizedABL(dims, domain, [MomentumAdvection()])
-    pddims = ABL.PhysicalSpace.pdsize(abl.grid, :quadratic)
+    pddims = BLD.PhysicalSpace.pdsize(abl.grid, :quadratic)
 
     x1 = LinRange(0, 2π, 13)[1:12]
     x2 = LinRange(0, 2π, 15)[1:14]
@@ -39,11 +39,11 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = u0,  vel2 = 0, vel3 = 0)
-        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.PhysicalSpace.set_field!((x,y,z) -> du0(x,y,z) * u0(x,y,z), adv[:vel2],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
-        ABL.PhysicalSpace.set_field!((x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), adv[:vel3],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
+        BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        BLD.PhysicalSpace.set_field!((x,y,z) -> du0(x,y,z) * u0(x,y,z), adv[:vel2],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel2))
+        BLD.PhysicalSpace.set_field!((x,y,z) -> (u0z[2] - u0z[1]) * u0(x,y,z), adv[:vel3],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel3))
 
         # compare solutions
         @test rhs.vel1 .+ 1 ≈ ones(eltype(rhs.vel1), size(rhs.vel1))
@@ -67,11 +67,11 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = v0, vel3 = 0)
-        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.PhysicalSpace.set_field!((x,y,z) -> dv0(x,y,z) * v0(x,y,z), adv[:vel1],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
-        ABL.PhysicalSpace.set_field!((x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), adv[:vel3],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
+        BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        BLD.PhysicalSpace.set_field!((x,y,z) -> dv0(x,y,z) * v0(x,y,z), adv[:vel1],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel1))
+        BLD.PhysicalSpace.set_field!((x,y,z) -> (v0z[2] - v0z[1]) * v0(x,y,z), adv[:vel3],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel3))
 
         # compare solutions
         if Nk == 5
@@ -94,9 +94,9 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = 0, vel3 = w0)
-        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel1],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
+        BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        BLD.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel1],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel1))
 
         # boundary conditions do not match exact solution, so skip the border
         # layers in test
@@ -122,9 +122,9 @@ function test_advection_exact(NZ)
 
         # compute numerical and exact solution
         initialize!(abl, vel1 = 0, vel2 = 0, vel3 = w0)
-        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
-        ABL.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel2],
-                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
+        BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        BLD.PhysicalSpace.set_field!((x,y,z) -> dw0(x,y,z) * w0(x,y,z), adv[:vel2],
+                       abl.physical_spaces[pddims].transform, abl.domain, abl.grid, BLD.Grids.nodes(:vel2))
 
         # boundary conditions do not match exact solution, so skip the border
         # layers in test
@@ -184,17 +184,17 @@ function advection_error_convergence(Nh, Nv)
 
         # create arrays with exact solution (in frequency space)
         adv = deepcopy(abl.state)
-        pddims = ABL.PhysicalSpace.pdsize(abl.grid, :quadratic)
-        ABL.PhysicalSpace.set_field!(adv1, adv[:vel1], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.Grids.nodes(:vel1))
-        ABL.PhysicalSpace.set_field!(adv2, adv[:vel2], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.Grids.nodes(:vel2))
-        ABL.PhysicalSpace.set_field!(adv3, adv[:vel3], abl.physical_spaces[pddims].transform,
-                       abl.domain, abl.grid, ABL.Grids.nodes(:vel3))
+        pddims = BLD.PhysicalSpace.pdsize(abl.grid, :quadratic)
+        BLD.PhysicalSpace.set_field!(adv1, adv[:vel1], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, BLD.Grids.nodes(:vel1))
+        BLD.PhysicalSpace.set_field!(adv2, adv[:vel2], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, BLD.Grids.nodes(:vel2))
+        BLD.PhysicalSpace.set_field!(adv3, adv[:vel3], abl.physical_spaces[pddims].transform,
+                       abl.domain, abl.grid, BLD.Grids.nodes(:vel3))
 
         # set up velocity field and compute advection term
         initialize!(abl, vel1 = u0, vel2 = v0, vel3 = w0)
-        ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+        BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
         # measure error in frequency space
         ε1 = global_maximum(abs.(rhs[:vel1] .- adv[:vel1]))

@@ -1,8 +1,8 @@
 # Turbulence-Resolving Simulations of Atmospheric Boundary-Layer Flows
 
-ABL.jl can simulate a range of physical problems, but its primary purpose is to
-simulate the evolution of turbulent flows in simplified representations of the
-atmospheric boundary layer.
+BoundaryLayerDynamics.jl can simulate a range of physical problems, but its
+primary purpose is to simulate the evolution of turbulent flows in simplified
+representations of the atmospheric boundary layer.
 
 It can be used to perform *direct numerical simulation (DNS)* and *large-eddy
 simulation (LES)* of flows in channel-like geometries.
@@ -17,8 +17,8 @@ simulation (LES)* of flows in channel-like geometries.
 - LES wall-model: analytic rough-wall equilibrium model
 - parallelization: MPI (one process per vertical grid point)
 
-ABL.jl was created by [Manuel F. Schmid](mailto:m.schmid@civil.ubc.ca) in
-collaboration with Marco G. Giometto and Marc B. Parlange.
+BoundaryLayerDynamics.jl was created by [Manuel F. Schmid](mailto:mfs2173@columbia.edu)
+in collaboration with Marco G. Giometto and Marc B. Parlange.
 
 ## Installation
 

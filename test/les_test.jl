@@ -16,7 +16,7 @@ function test_closed_channel_les(n)
     # compute advection term for constant velocity and check that advective
     # stress is equal to wall stress from wall model
     initialize!(abl, vel1=ic[1], vel2=ic[2])
-    ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+    BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
     utot = sqrt(u1^2+u2^2)
     τw = 0.4^2 * utot^2 / log(ds[3]/n/2/z0)^2
@@ -26,7 +26,7 @@ function test_closed_channel_les(n)
     # compute advection term for linear velocity field
     dudz = 0.40595
     initialize!(abl, vel1 = (x,y,z) -> (z-1) * dudz)
-    ABL.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
+    BLD.Processes.compute_rates!(rhs, abl.state, 0.0, abl.processes, abl.physical_spaces)
 
     # check that eddy viscosity is correct
     S13 = S31 = 1/2 * (dudz + 0) # dw/dx == 0

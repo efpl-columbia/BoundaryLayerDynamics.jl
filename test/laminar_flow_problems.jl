@@ -90,7 +90,7 @@ Nt_viscous(T, Nz; δ = one(T), ν = one(T), t = one(T), Cmax = one(T)/2, η = no
 
 dx3_min(δ, N3, η::Nothing) = 2 * δ / N3
 function dx3_min(δ::T, N3, η::T) where T
-    x3, Dx3 = ABL.Domains.instantiate(SinusoidalMapping(η, :symmetric), 2*δ)
+    x3, Dx3 = BoundaryLayerDynamics.Domains.instantiate(SinusoidalMapping(η, :symmetric), 2*δ)
     ζ = LinRange(zero(T), one(T), 2*N3+1) # all nodes
     minimum(Dx3.(ζ)) / N3
 end
@@ -113,7 +113,7 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
     uref = T[u_exact(x3, t) for x1=1:1, x2=1:1, x3=coordinates(abl, :vel1, 3)]
     εu1 = abl[:vel1] .- uref * dir[1]
     εu2 = abl[:vel2] .- uref * dir[2]
-    εu3 = ABL.State.getterm(abl.state, :vel3, abl.domain, abl.grid, abl.physical_spaces, ABL.NodeSet(:C))
+    εu3 = BoundaryLayerDynamics.State.getterm(abl.state, :vel3, abl.domain, abl.grid, abl.physical_spaces, BoundaryLayerDynamics.NodeSet(:C))
 
     # maximum relative error, based on global velocity to avoid division by zero
     sqrt(global_maximum(abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) / global_maximum(abs2.(uref)))
@@ -176,7 +176,7 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
     # compute error before interpolation (bc3 works for error as well)
     # TODO: figure out why the error is not similar when first interpolating
     # and comparing values on I-nodes
-    ε3 = ABL.State.interpolate(abl[:vel3] .- T[u3ref(x...,t) for x=xv], :vel3, abl.domain, abl.grid)
+    ε3 = BoundaryLayerDynamics.State.interpolate(abl[:vel3] .- T[u3ref(x...,t) for x=xv], :vel3, abl.domain, abl.grid)
 
     # maximum relative error, based on global velocity to avoid divison by zero
     sqrt(global_maximum(abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) / global_maximum(

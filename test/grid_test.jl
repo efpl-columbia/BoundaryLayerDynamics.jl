@@ -13,10 +13,10 @@ function i3_range_from_neighbors(gd)
 end
 
 function test_grid_setup(N3)
-    gd = ABL.Grid((64, 32, N3))
+    gd = BLD.Grid((64, 32, N3))
 
     # even number of frequencies should be rounded down as Nyquist is removed
-    gd2 = ABL.Grid((63, 31, N3))
+    gd2 = BLD.Grid((63, 31, N3))
     @test all([getproperty(gd, p) == getproperty(gd2, p) for p in
                (:k1max, :k2max, :n3c, :n3i, :n3global, :i3min, :i3max)])
 
@@ -27,17 +27,17 @@ function test_grid_setup(N3)
     @test (gd.i3min, gd.i3max) == i3_range_from_neighbors(gd)
 
     # make sure the correct wavenumbers are generated
-    ABL.Grids.wavenumbers(gd, 1) == [0:31;]
-    ABL.Grids.wavenumbers(gd, 2) == [0:31; -31:-1]
+    BLD.Grids.wavenumbers(gd, 1) == [0:31;]
+    BLD.Grids.wavenumbers(gd, 2) == [0:31; -31:-1]
 end
 
 # helper to test grid distribution without actual MPI setup
-ABL.Grids.init_processes(comm::Tuple) = (comm, comm...)
+BLD.Grids.init_processes(comm::Tuple) = (comm, comm...)
 
 function test_grid_distribution()
-    @test ABL.Grid(64, comm=(1, 32)).n3c == 2
-    @test [ABL.Grid(64, comm=(i, 8)).n3i for i=1:8] == [8,8,8,8,8,8,8,7]
-    @test [ABL.Grid(60, comm=(i, 8)).n3c for i=1:8] == [8,8,8,8,7,7,7,7]
+    @test BLD.Grid(64, comm=(1, 32)).n3c == 2
+    @test [BLD.Grid(64, comm=(i, 8)).n3i for i=1:8] == [8,8,8,8,8,8,8,7]
+    @test [BLD.Grid(60, comm=(i, 8)).n3c for i=1:8] == [8,8,8,8,7,7,7,7]
 end
 
 @timeit "Grid" @testset "Staggered Fourier Grid" begin
