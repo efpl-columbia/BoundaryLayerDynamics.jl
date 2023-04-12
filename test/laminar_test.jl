@@ -15,7 +15,7 @@ function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false)
     δ  = one(T) / 4 * 3 + rand(T) / 2
     uτ = one(T) / 4 * 3 + rand(T) / 2
     t  = (δ^2 / ν) / 6
-    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν, η=η)
+    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν, η=η, Cmax=one(T)/8)
 
     εp = poiseuille_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
     εc =    couette_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
@@ -25,7 +25,7 @@ function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false)
     α  = one(T) / 4 * 3 + rand(T) / 2
     β  = one(T) / 4 * 3 + rand(T) / 2
     t = 1 / ((α^2 + β^2) * ν)
-    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t, Cmax=1/16)
+    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t, Cmax=one(T)/16)
 
     εtgv = taylor_green_vortex_error.(T, 3, N, Nt, t=t, ν=ν, α=α, β=β, A=A, dir=ex, η=η)
     εtgh = taylor_green_vortex_error.(T, 3, Nz_min, N,  t=t, ν=ν, α=α, β=β, A=A, η=η)

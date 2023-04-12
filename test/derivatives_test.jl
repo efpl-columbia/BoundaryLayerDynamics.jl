@@ -1,11 +1,11 @@
 # set up new process that just requests the vorticity as input and checks if it
 # matches some reference
-struct Vorticity
+struct Vorticity <: BLD.Processes.DiscretizedProcess
     dealiasing
     reference
     Vorticity(dealiasing = :quadratic; kwargs...) = new(dealiasing, kwargs)
 end
-struct VorticityTest
+struct VorticityTest <: BLD.Processes.DiscretizedProcess
     dims
     reference
     coords
@@ -23,10 +23,10 @@ BLD.Processes.init_process(vort::Vorticity, domain::Domain{T}, grid) where T = b
     x3i = BLD.x3range(domain, BLD.Grids.vrange(grid, NS(:I)))
     VorticityTest(dims, vort.reference, (x1, x2, x3c, x3i))
 end
-BLD.Processes.add_rate!(_rates, term::VorticityTest, state, _t, _log) = begin
+BLD.Processes.add_rates!(_rates, term::VorticityTest, state, _t, _log) = begin
     state = state[term.dims]
     for (f, ref) in pairs(term.reference)
-        ns = BLD.nodes(f)
+        ns = BLD.Grids.nodes(f)
         x1, x2 = term.coords[1:2]
         x3 = term.coords[ns isa NS{:C} ? 3 : ns isa NS{:I} ? 4 : error("Invalid field")]
 

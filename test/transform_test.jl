@@ -1,7 +1,7 @@
 function test_transform_constant()
     gd, ht, uh, uv = setup_random_fields(Float64, 64, 32, 16)
     ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
-    domain = BLD.Domain(ds, nothing, nothing)
+    domain = Domain(ds, nothing, nothing)
     BLD.PhysicalSpace.set_field!((x,y,z)->1, uh, ht, domain, gd, NS(:C))
     BLD.PhysicalSpace.set_field!((x,y,z)->2, uv, ht, domain, gd, NS(:I))
     @test uh[1,1,:] ≈ 1 * ones(gd.n3c)
@@ -20,7 +20,7 @@ end
 function test_transform_horizontally_varying()
     gd, ht, uh, uv = setup_random_fields(Float64, 16, 16, 16)
     ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
-    domain = BLD.Domain(ds, nothing, nothing)
+    domain = Domain(ds, nothing, nothing)
     k = -7:8
     ax = [rand() for k=k]
     ay = [rand() for k=k]
@@ -45,7 +45,7 @@ end
 function test_transform_vertically_varying()
     gd, ht, uh, uv = setup_random_fields(Float64, 64, 32, 16)
     ds = (3*0.5176366701850579, 2*0.9360371626346338, 0.10477115957769456)
-    domain = BLD.Domain(ds, nothing, nothing)
+    domain = Domain(ds, nothing, nothing)
     global_values_h = LinRange(0, ds[3], 2*gd.n3global+1)[2:2:end-1]
     global_values_v = LinRange(0, ds[3], 2*gd.n3global+1)[3:2:end-2]
     BLD.PhysicalSpace.set_field!((x,y,z)->z, uh, ht, domain, gd, NS(:C))
