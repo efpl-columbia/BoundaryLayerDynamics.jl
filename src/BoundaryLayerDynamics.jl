@@ -16,7 +16,7 @@ export MolecularDiffusion, MomentumAdvection, Pressure, ConstantSource, Constant
 export Euler, AB2, SSPRK22, SSPRK33
 
 # logging/output
-export MeanProfiles, Snapshots
+export MeanProfiles, ProgressMonitor, Snapshots, StepTimer
 
 include("util.jl")
 include("fileio.jl")
@@ -37,7 +37,8 @@ using .Processes
 using .Domains
 using .State: State, init_state
 using .ODEMethods
-using .Logging: Logging, ProgressMonitor, MeanProfiles, Snapshots, Log, flush!
+using .Logging: Logging, MeanProfiles, ProgressMonitor, Snapshots, StepTimer,
+    Log, flush!
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
 using TimerOutputs: @timeit
