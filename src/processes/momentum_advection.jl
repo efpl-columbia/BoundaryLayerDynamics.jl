@@ -2,7 +2,7 @@ export MomentumAdvection
 
 struct MomentumAdvection <: ProcessDefinition
     dealiasing
-    MomentumAdvection(dealiasing = :quadratic) = new(dealiasing)
+    MomentumAdvection(; dealiasing = :quadratic) = new(dealiasing)
 end
 
 struct DiscretizedMomentumAdvection{T} <: DiscretizedProcess

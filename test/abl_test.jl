@@ -6,7 +6,7 @@ function test_abl_setup()
 
     domain = Domain(L, RoughWall(1e-4), FreeSlipBoundary())
     processes = incompressible_flow(1/Re)
-    abl = Model(N, domain, incompressible_flow(Re))
+    abl = Model((N, N, N), domain, incompressible_flow(Re))
 
     io = IOBuffer()
     show(io, MIME("text/plain"), abl)

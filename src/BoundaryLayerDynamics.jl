@@ -50,9 +50,9 @@ struct Model{T,P}
     processes::P
     physical_spaces
 
-    function Model(modes, domain::Domain{T}, processes;
+    function Model(resolution::NTuple{3,Integer}, domain::Domain{T}, processes;
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
-        grid = Grid(modes, comm = comm)
+        grid = Grid(resolution, comm = comm)
         processes = [init_process(p, domain, grid) for p in processes]
         state = init_state(T, grid, state_fields(processes))
         physical_spaces = init_physical_spaces(transformed_fields(processes), domain, grid)

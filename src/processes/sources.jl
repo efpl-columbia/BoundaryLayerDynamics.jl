@@ -2,7 +2,7 @@ export ConstantSource, ConstantMean
 
 struct ConstantSource <: ProcessDefinition
     field::Symbol
-    strength
+    strength::Real
     ConstantSource(field, strength = 1) = new(field, strength)
 end
 
@@ -41,6 +41,7 @@ end
 Base.nameof(::DiscretizedConstantMean) = "Constant Mean"
 
 function init_process(src::ConstantMean, domain::Domain{T}, grid) where T
+    nodes(src.field) isa NodeSet{:C} || error("The constant-mean source currently does not handle I-nodes correctly")
     weight = 1 ./ dx3factors(domain, grid, nodes(src.field)) / size(domain, 3)
     DiscretizedConstantMean(src.field, convert(T, src.mean_value), weight, grid.comm)
 end

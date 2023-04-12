@@ -29,7 +29,7 @@ struct Domain{T,F1,F2} <: AbstractDomain{T}
     lower_boundary
     upper_boundary
 
-    function Domain(::Type{T}, dims::Union{Tuple,AbstractArray},
+    function Domain(::Type{T}, dims::Tuple,
             lower_boundary, upper_boundary, mapping = nothing) where T
 
         l1, l2 = convert.(T, dims[1:2])
@@ -63,7 +63,7 @@ Base.extrema(domain::Domain{T}, dim::Int) where T = begin
 end
 
 # use double precision by default
-Domain(size, args...) = Domain(Float64, size, args...)
+Domain(size::Tuple, args...) = Domain(Float64, size, args...)
 
 """
     SinusoidalMapping(η, variant = :auto)

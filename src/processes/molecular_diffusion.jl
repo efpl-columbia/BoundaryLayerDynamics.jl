@@ -2,7 +2,7 @@ export MolecularDiffusion
 
 struct MolecularDiffusion <: ProcessDefinition
     field::Symbol
-    diffusivity
+    diffusivity::Real
 end
 
 struct DiscretizedMolecularDiffusion <: DiscretizedProcess
