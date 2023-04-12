@@ -19,15 +19,17 @@ show_output && println("Testing BoundaryLayerDynamics.jl... ($(nproc == 1 ? "sin
 
 # allow selecting individual tests through command-line arguments
 # (starting Julia 1.3, these can be passed using Pkg.test(..., test_args=``))
-tests = ["grid", "transform", "diffusion", "advection", "pressure", "ode",
-         "laminar", "output", "les", "logging", "abl"]
+const tests = ["grid", "transform", "derivatives", "diffusion", "advection",
+               "pressure", "ode", "laminar", "output", "les", "logging", "abl"]
 selection = filter(a -> !startswith(a, '-'), ARGS)
-if !isempty(selection) && selection != ["all"]
-    filter!(t -> t in selection, tests)
+selection == ["all"] && pop!(selection)
+isempty(selection) && append!(selection, tests)
+let unknown = filter(t -> !(t in tests), selection)
+    isempty(unknown) || error("Unknown test(s): ", join(unknown, ", "))
 end
 
 @timeit "BoundaryLayerDynamics.jl Tests" @testset MPITestSet "Atmospheric Boundary Layer Simulations" begin
-    for test in tests
+    for test in selection
         include("$(test)_test.jl")
     end
 end
