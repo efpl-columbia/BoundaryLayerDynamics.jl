@@ -44,6 +44,34 @@ using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
 using TimerOutputs: @timeit
 using RecursiveArrayTools: ArrayPartition
 
+"""
+    Model(resolution, domain, processes)
+
+A `Model` provides a discretized representation of the dynamics of the
+specified `processes` within the specified `domain`.
+
+It contains discretized state variables such as the velocity field that are
+initially set to zero, as well as all the information needed to efficiently
+compute the rate of change of these state variables. The required state
+variables are automatically determined from the specified processes.
+
+# Arguments
+- `resolution::NTuple{3, Integer}`: The number of modes along the ``x_1`` and
+  ``x_2`` direction, as well as the number of grid points along the ``x_3``
+  direction. The first two values should be odd and will be reduced by one if
+  they are even to ensure that the resolved wavenumbers are symmetric around
+  zero.
+- `domain::Domain`: The simulated universum, represented with the
+  [`Domain`](@ref) type.
+- `processes`: A list of the physical processes that govern the dynamical
+  behavior of the state variables. For convenience, the list can be any
+  iterable collection and can also be nested.
+
+# Keywords
+- `comm::MPI.Comm`: The MPI communicator that the model will make use of. If
+  not specified, `MPI.COMM_WORLD` is used. Note that specifying a different
+  communicator is poorly tested currently and may lead to unexpected behavior.
+"""
 struct Model{T,P}
     domain
     grid
@@ -137,6 +165,29 @@ projection!(model::Model, log = nothing) = (s) -> begin
     apply_projections!(state, model.processes, log)
 end
 
+"""
+    evolve!(model, tspan; dt, method, output)
+
+Simulate a `model`’s evolution over time, optionally collecting data along
+the way.
+
+# Arguments
+- `model::Model`: The [`Model`](@ref) containing the current state as well
+  as the discretized processes that describe the rate of change of the
+  state.
+- `tspan`: The time span over which the evolution of the model should be
+  simulated. Can be a single `Number` with the total duration or a `Tuple`
+  of `Number`s with the start and end times.
+
+# Keywords
+- `dt`: The (constant) size of the time step (required). Note that `tspan`
+  has to be divisible by `dt`.
+- `method = SSPRK33()`: The [time-integration method](@ref
+  Time-Integration-Methods) used to solve the semi-discretized
+  initial-value problem as an ordinary differential equation.
+- `output = []`: A list of [output modules](@ref Output-Modules) that
+  collect data during the simulation.
+"""
 function evolve!(model::Model{T}, tspan;
         dt = nothing, method = SSPRK33(), output = (),
         verbose = false) where T

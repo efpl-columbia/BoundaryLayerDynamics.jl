@@ -5,15 +5,20 @@ export Domain, SinusoidalMapping, SmoothWall, RoughWall, FreeSlipBoundary, Custo
 abstract type AbstractDomain{T} end
 
 """
-    Domain([T], dimensions, lower_boundary, upper_boundary, mapping = nothing)
+    Domain([T=Float64,] dimensions, lower_boundary, upper_boundary, [mapping])
+
+Three-dimensional Cartesian domain of size `dimensions`, periodic along the
+first two coordinate directions and delimited by `lower_boundary` and
+`upper_boundary` along the third coordinate direction.
 
 # Arguments
 
-- `T`: Type that is used for coordinates and flow data.
-- `dimensions`: Size of the domain, either as Tuple or AbstractArray. The third
-  dimension can be specified as a single value, in which case the domain is
-  assumed to start at ``x_3=0`` or as a tuple with the minimum and maximum
-  ``x_3`` values. If it is omitted, the default of ``x_3 ∈ [0,1]`` is assumed.
+- `T::DataType = Float64`: Type that is used for coordinates and fields inside domain.
+- `dimensions::Tuple`: Size of the domain. The third dimension can be specified
+  as a single value, in which case the domain is assumed to start at ``x_3=0``
+  or as a tuple with the minimum and maximum ``x_3`` values. If it is omitted,
+  the default of ``x_3 ∈ [0,1]`` is assumed, unless a custom `mapping` is
+  provided.
 - `lower_boundary`, `upper_boundary`: Boundary definitions.
 - `mapping`: A non-linear mapping from the interval ``[0,1]`` to the range of
   ``x_3`` values, instead of the default linear mapping. The mapping can either
@@ -70,7 +75,7 @@ Domain(size::Tuple, args...) = Domain(Float64, size, args...)
 
 Define a transformed vertical coordinate with a mapping in the form of
 
-``x_3 = \\frac{sin(ζ η π/2)}{sin(η π/2)}``
+``x_3 = \\frac{\\sin(ζ η π/2)}{\\sin(η π/2)}``
 
 appropriately rescaled such that it maps the range ``0≤ζ≤1`` to the
 ``x_3``-range of the [`Domain`](@ref).
@@ -168,18 +173,52 @@ function scalefactor(domain::Domain{T}, dim::Int, pos::Rational) where T
     error("Invalid dimension `$pos`")
 end
 
+"""
+    SmoothWall()
+
+A wall that is aerodynamically smooth and has no-slip, no-penetration boundary
+conditions for the velocity field.
+"""
+struct SmoothWall
+end
+
+"""
+    RoughWall(roughness, [von_karman_constant = 0.4])
+
+A wall that is aerodynamically rough with a `roughness` length scale ``z₀``.
+The mean streamwise velocity near the wall can be assumed to follow a
+logarithmic profile with the specified von Kármán constant.
+"""
 struct RoughWall
     roughness
     von_karman_constant
     RoughWall(z0, kappa = 0.4) = new(z0, kappa)
 end
 
-struct SmoothWall
-end
+"""
+    FreeSlipBoundary()
 
+A no-penetration boundary with vanishing gradients for tangential velocity
+components.
+"""
 struct FreeSlipBoundary
 end
 
+"""
+    CustomBoundary(; boundary_behaviors...)
+
+A boundary that explicitly specifies the mathematical boundary conditions for
+all state variables. Boundary conditions can be specified as keyword arguments,
+where the key is the name of the field and the value is either one of
+`:dirichlet` or `:neumann` for homogeneous boundary conditions, or a `Pair`
+that includes the non-zero value, such as `:dirichlet => 1`.
+
+# Example
+
+```
+CustomBoundary(vel1 = :dirichlet => 1, vel2 = :dirichlet, vel3 = :neumann)
+```
+"""
 struct CustomBoundary
     behaviors
     CustomBoundary(; behaviors...) = new(NamedTuple(behaviors))

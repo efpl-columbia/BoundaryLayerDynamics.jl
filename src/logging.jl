@@ -89,7 +89,16 @@ prepare_samples!(opts...) = nothing
 
 
 """
-Collect time stamps every N steps to measure the compute time per time step.
+    StepTimer(; kwargs...)
+
+Collect time stamps every ``N`` steps to measure the compute time per time step
+and write it to a [JSON](https://en.wikipedia.org/wiki/JSON) file.
+
+# Keywords
+
+- `path = "output/timestamps.json"`: The path to the output file.
+- `frequency = 1`: The number of time steps ``N`` computed between each
+  collected time stamp.
 """
 struct StepTimer
     path::AbstractString
@@ -130,7 +139,24 @@ function flush!(log::StepTimer)
     end
 end
 
+"""
+    ProgressMonitor(; kwargs...)
 
+Print information about an ongoing simulation to the standard output at regular
+intervals of wall time.
+
+# Keywords
+
+- `frequency = 10`: The wall-time interval (in seconds) between each progress
+  report. Reports are always displayed at the end of a time step, if the wall
+  time since the previous report exceeds the specified interval.
+- `always_update = true`: Print a dot after each time step between regular
+  reports to indicate the ongoing progress of the simulation.
+- `tstep = nothing`: Passing the time step ``Δt`` to the `ProgressMonitor`
+  allows computing an advective Courant number ``C = Δt / (∂₃^{max}
+  |u|^{max})``. If not set, the advective time scale ``1 / (∂₃^{max}
+  |u|^{max})`` is reported instead.
+"""
 struct ProgressMonitor
     range
     frequency
@@ -288,14 +314,15 @@ end
 
 
 """
-    MeanProfiles(<keyword arguments>)
+    MeanProfiles(; kwargs...)
 
-Collect profiles of terms, averaged over time and horizontal space.
-The time average is computed with the trapezoidal rule using samples
-collected before/after each time step. The averages are saved to HDF5
-files, which can be written regularly during a simulation.
+Collect profiles of terms, averaged over time and horizontal space. The time
+average is computed with the trapezoidal rule using samples collected
+before/after each time step. The averages are saved to
+[HDF5](https://en.wikipedia.org/wiki/Hierarchical_Data_Format) files, which can
+be written regularly during a simulation.
 
-# Arguments
+# Keywords
 
 - `profiles = (:vel1, :vel2, :vel3)`: Terms of which profiles are
   collected. Currently supported: `:vel1`, `:vel2`, `:vel3`, `:adv1`,
@@ -502,6 +529,27 @@ function write_profiles(fn, profiles, metadata)
     end
 end
 
+"""
+    Snapshots(; kwargs...)
+
+Save the instantaneous state ``\\mathbf{\\hat{s}}`` to a collection of
+[Cartesian Binary Data](https://gitlab.com/efpl-columbia/codes/cbd-format)
+files at regular intervals during the simulation.
+
+# Keywords
+
+- `frequency`: The frequency (in units of simulation time) at which snapshots
+  should be saved. Note that this should be a multiple of the time step ``Δt``.
+- `path = "output/snapshots"`: Path to a folder inside which the snapshots will
+  be saved.
+- `centered = true`: Save values at the ``x₁``- and ``x₂``-locations at the
+  center of the intervals obtained by dividing the domain into ``N₁×N₂``
+  segments. If set to `false`, the locations start at 0 instead and end one
+  grid spacing before the end of the domain.
+- `precision::DataType`: The floating-point data type used in the output,
+  either `Float32` or `Float64`. By default this is set to the data type used
+  for the simulation by the `Model`.
+"""
 struct Snapshots{T}
     frequency
     path

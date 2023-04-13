@@ -1,5 +1,15 @@
 export ConstantSource, ConstantMean
 
+"""
+    ConstantSource(field, strength = 1)
+
+Source term for a scalar quantity ``q`` with source strength ``S`` that is constant in space and time.
+
+# Arguments
+
+- `field::Symbol`: The name of the quantity ``q``.
+- `strength::Real`: The source strength ``S``.
+"""
 struct ConstantSource <: ProcessDefinition
     field::Symbol
     strength::Real
@@ -24,7 +34,16 @@ function add_rates!(rate, term::DiscretizedConstantSource, state, t, log)
     rate
 end
 
+"""
+    ConstantMean(field, mean_value = 1)
 
+Source term for a scalar quantity ``q`` with a source strength that is constant in space but dynamically adjusted in time to maintain a constant mean value ``Q`` for ``q``.
+
+# Arguments
+
+- `field::Symbol`: The name of the quantity ``q``.
+- `mean_value::Real`: The mean value ``Q`` that is maintained.
+"""
 struct ConstantMean <: ProcessDefinition
     field::Symbol
     mean_value

@@ -14,30 +14,38 @@ abstract type ODEMethod end
 """
     Euler()
 
-First-order forward Euler time integration.
+First-order explicit (“forward”) Euler method for time integration.
+This corresponds to an explicit linear multi-step methods with parameters
+``α₀=1`` and ``β₀=1``.
 """
 struct Euler <: ODEMethod end
 
 """
     AB2()
 
-Second-order Adams-Bashforth time integration.
+Second-order Adams–Bashforth method for time integration.
+This corresponds to an explicit linear multi-step methods with parameters
+``α₀=1``, ``β₀=3/2``, and ``β₁=−1/2``.
 """
 struct AB2 <: ODEMethod end
 
 """
     SSPRK22()
 
-Two-stage second-order strong-stability-preserving Runge-Kutta time
-integration.
+Two-stage second-order strong-stability-preserving Runge–Kutta method for time
+integration, with the Shu–Osher coefficients ``α₁₀=β₁₀=1`` and
+``α₂₀=α₂₁=β₂₁=1/2``
+(see [Gottlieb et al. 2009](https://doi.org/10.1007/s10915-008-9239-z)).
 """
 struct SSPRK22 <: ODEMethod end
 
 """
     SSPRK33()
 
-Three-stage third-order strong-stability-preserving Runge-Kutta time
-integration.
+Three-stage third-order strong-stability-preserving Runge–Kutta method for time
+integration, with the Shu–Osher coefficients ``α₁₀=β₁₀=1``, ``α₂₀=3/4``,
+``α₂₁=β₂₁=1/4``, ``α₃₀=1/3``, and ``α₃₂=β₃₂=2/3``
+(see [Gottlieb et al. 2009](https://doi.org/10.1007/s10915-008-9239-z)).
 """
 struct SSPRK33 <: ODEMethod end
 

@@ -180,6 +180,15 @@ LinearAlgebra.ldiv!(x, A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(A, copy
 LinearAlgebra.:\(A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(similar(b), A, b)
 
 
+"""
+    Pressure(batch_size = 64)
+
+Transport of momentum by a pressure-like variable that enforces a divergence-free velocity field.
+
+Arguments
+
+- `batch_size::Int`: The number of wavenumber pairs that are included in each batch of the tri-diagonal solver. The batching serves to stagger the computation such that different MPI ranks can work on different batches at the same time.
+"""
 struct Pressure <: ProcessDefinition
     batch_size::Int
     Pressure(batch_size = 64) = new(batch_size)
