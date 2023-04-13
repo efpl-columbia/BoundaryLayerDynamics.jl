@@ -26,9 +26,7 @@ struct StaggeredFourierGrid{C} <: DistributedGrid{C}
         # determine local range of vertical indices
         comm, proc_id, proc_count = init_processes(comm)
         n3 >= proc_count || error("There should not be more processes than vertical layers")
-        n3_per_proc, n3_rem = divrem(n3, proc_count)
-        i3min = 1 + n3_per_proc * (proc_id - 1) + min(n3_rem, proc_id - 1)
-        i3max = min(n3_per_proc * proc_id + min(n3_rem, proc_id), n3)
+        i3min, i3max = extrema(i3range(proc_id, proc_count, n3))
         n3c = i3max - i3min + 1
         n3i = (proc_id == proc_count ? n3c - 1 : n3c)
 
@@ -38,6 +36,25 @@ end
 
 StaggeredFourierGrid(n::Int; kwargs...) = StaggeredFourierGrid((n, n, n); kwargs...)
 StaggeredFourierGrid((nh, nv)::Tuple{Int,Int}; kwargs...) = StaggeredFourierGrid((nh, nh, nv); kwargs...)
+
+# ground truth for how layers are distributed amongst processes
+function i3range(proc_id, proc_count, n3)
+    n3_per_proc, n3_rem = divrem(n3, proc_count)
+    i3min = 1 + n3_per_proc * (proc_id - 1) + min(n3_rem, proc_id - 1)
+    i3max = min(n3_per_proc * proc_id + min(n3_rem, proc_id), n3)
+    i3min:i3max
+end
+
+function proc_for_layer(grid::StaggeredFourierGrid, ind)
+    isnothing(grid.comm) && return 0
+    i3 = ind > 0 ? ind : grid.n3global - abs(ind) + 1
+    proc_count = MPI.Comm_size(grid.comm)
+    for proc_id in 1:proc_count
+        i3 in i3range(proc_id, proc_count, grid.n3global) &&
+            return MPI.Cart_rank(grid.comm, proc_id-1)
+    end
+    error("Layer $i3 does not belong to any process")
+end
 
 init_processes(comm::Nothing) = (comm, 1, 1)
 function init_processes(comm)

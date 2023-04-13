@@ -2,29 +2,35 @@ module BoundaryConditions
 
 using MPI: MPI
 using ..Domains: Domain, SmoothWall, RoughWall, CustomBoundary, FreeSlipBoundary
-using ..Grids: AbstractGrid as Grid, fdsize, neighbors
+using ..Grids: AbstractGrid as Grid, NodeSet, fdsize, neighbors, proc_for_layer
 using ..PhysicalSpace: pdsize
 
 struct BoundaryCondition{BC,Nb,Na,C,A}
     type::BC
     buffer::A
     comm::C
-    BoundaryCondition(type::BC, buffer::A, comm::C, (Nb, Na)) where {BC,A,C} =
-        new{BC,Nb,Na,C,A}(type, buffer, comm)
+    min_procs::NTuple{3,Int}
+    max_procs::NTuple{3,Int}
+    BoundaryCondition(type::BC, buffer::A, comm::C, (Nb, Na), pmin, pmax) where {BC,A,C} =
+        new{BC,Nb,Na,C,A}(type, buffer, comm, pmin, pmax)
 end
 
 # set up frequency domain boundary condition
 function BoundaryCondition(::Type{T}, type, grid::Grid) where T
     type = init_bctype(T, type)
     buffer = zeros(Complex{T}, fdsize(grid))
-    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
+    pmin = ntuple(i -> proc_for_layer(grid, i), 3)
+    pmax = ntuple(i -> proc_for_layer(grid, -i), 3)
+    BoundaryCondition(type, buffer, grid.comm, neighbors(grid), pmin, pmax)
 end
 
 # set up physical domain boundary condition
 function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing) where T
     type = init_bctype(T, type)
     buffer = zeros(T, pdsize(grid, dealiasing))
-    BoundaryCondition(type, buffer, grid.comm, neighbors(grid))
+    pmin = ntuple(i -> proc_for_layer(grid, i), 3)
+    pmax = ntuple(i -> proc_for_layer(grid, -i), 3)
+    BoundaryCondition(type, buffer, grid.comm, neighbors(grid), pmin, pmax)
 end
 
 struct ConstantValue{T}
@@ -148,6 +154,59 @@ function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb
 end
 
 """
+    boundary_layer(layers, ind, bc, extra_layers=())
+
+Pass the `ind`-th layer away from the boundary to the process responsible for
+the boundary, avoiding communication if the data is already on the right
+process. Other processes should not use the return value.
+
+NOTE: This only has been verified to work for C-nodes and probably needs
+adjustments for I-nodes.
+
+# Arguments
+
+- `layers`: The local layers of each process.
+- `ind`: The index of the desired layer. Positive values are counted from the
+  lower boundary, negative values from the upper boundary.
+- `bc`: The `BoundaryCondition` for the boundary that the data should be passed
+  to. If communication is required, the buffer of this boundary condition will
+  be used.
+- `extra_layers`: Additional layers that are already available at the boundary
+  process, e.g. from earlier communication. It is assumed that every process
+  has the same number of extra layers and that they are ordered away from the
+  boundary.
+"""
+function boundary_layer(layers, ind::Int, bc, extra_layers=())
+    lbc = ind > 0 # lower or upper boundary
+    ind = abs(ind)
+    boundary_procs = lbc ? bc.min_procs : bc.max_procs
+    src = boundary_procs[ind]
+    dst = boundary_procs[1]
+
+    boundary_layers = findlast(p -> p == dst, boundary_procs)
+    proc = isnothing(bc.comm) ? 0 : MPI.Cart_coords(bc.comm)[]
+
+    if ind <= boundary_layers
+        # data is already in layers of boundary process
+        proc == dst && return layers[lbc ? ind : end+1-ind]
+
+    elseif ind <= boundary_layers + length(extra_layers)
+        # data is already in extra layers of boundary process
+        proc == dst && return extra_layers[ind - boundary_layers]
+
+    else # we need to send the data to the boundary
+        if proc == dst
+            MPI.Recv!(bc.buffer, src, MTAG_DN, bc.comm)
+            return bc.buffer
+        end
+        if proc == src
+            offset = ind - findfirst(p -> p == proc, boundary_procs)
+            MPI.Send(layers[lbc ? 1+offset : end-offset], dst, MTAG_DN, bc.comm)
+        end
+    end
+end
+
+"""
 This function takes a field defined on C-nodes, converts it into layers, and expands
 them through communication such that the list includes the layers just above and
 below all I-nodes. This means passing data down throughout the domain.
@@ -177,6 +236,68 @@ function layers_expand_full(field::AbstractArray,
 
     field = layers(field)
     layer_below(field, bc_below), field..., layer_above(field, bc_above)
+end
+
+function layers_expand_full(field, bc_below, bc_above, ::NodeSet{:I})
+    field = layers(field)
+    below = layer_below(field, bc_below)
+    above = layer_above(field, bc_above)
+    if below isa ConstantValue
+        below = below.value
+    end
+    if above isa ConstantValue
+        above = above.value
+    end
+    below, field..., above
+end
+
+function layers_expand_full(field::AbstractArray{T},
+        bc_below::BoundaryCondition{BCb,Nb,Na},
+        bc_above::BoundaryCondition{BCa,Nb,Na}, ::NodeSet{:C}) where {T,BCb,BCa,Nb,Na}
+
+    field = layers(field)
+    below = layer_below(field, bc_below)
+    above = layer_above(field, bc_above)
+
+    if BCb <: ConstantValue
+        l3 = boundary_layer(field, 3, bc_below, (above,))
+        if isnothing(Nb) # handle boundary after sending/receiving third layer
+            l0 = below.value
+            l1 = field[1]
+            l2 = length(field) >= 2 ? field[2] : above
+            # extrapolate with fourth-order accuracy
+            if T <: Complex
+                @. bc_below.buffer = (- 15 * l1 + 5 * l2 - l3) / 5
+                bc_below.buffer[1,1] += 16 * l0 / 5
+            else
+                @. bc_below.buffer = (16 * l0 - 15 * l1 + 5 * l2 - l3) / 5
+            end
+            # provide extrapolated value instead of boundary struct
+            below = bc_below.buffer
+        end
+    end
+
+    if BCa <: ConstantValue
+        l3 = boundary_layer(field, -3, bc_above, (below,))
+        if isnothing(Na) # handle boundary after sending/receiving third layer
+            l0 = above.value
+            l1 = field[end]
+            l2 = length(field) >= 2 ? field[end-1] : below
+            # extrapolate with fourth-order accuracy
+            if T <: Complex
+                @. bc_above.buffer = (- 15 * l1 + 5 * l2 - l3) / 5
+                bc_above.buffer[1,1] += 16 * l0 / 5
+            else
+                @. bc_above.buffer = (16 * l0 - 15 * l1 + 5 * l2 - l3) / 5
+            end
+            # provide extrapolated value instead of boundary struct
+            above = bc_above.buffer
+        end
+    end
+
+    # TODO: provide extrapolation for ConstantGradient BCs
+
+    below, field..., above
 end
 
 end # module BoundaryConditions

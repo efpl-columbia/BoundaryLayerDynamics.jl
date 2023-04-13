@@ -38,7 +38,7 @@ can be used to rescale the Laplacian before it is added.
 """
 function add_laplacian!(scalar_output, scalar_input, lower_bc, upper_bc, df, ns, prefactor = 1)
 
-    s_in_expanded = layers_expand_full(scalar_input, lower_bc, upper_bc)
+    s_in_expanded = layers_expand_full(scalar_input, lower_bc, upper_bc, ns)
     s_out = layers(scalar_output)
 
     for i = 1:equivalently(length(s_in_expanded)-2, length(s_out))
@@ -59,19 +59,3 @@ add_laplacian!(rhs, (lbc, vel⁰, vel⁺)::Tuple{ConstantGradient,A2,A3}, DD1, D
 add_laplacian!(rhs, (vel¯, vel⁰, ubc)::Tuple{A1,A2,ConstantGradient}, DD1, DD2, DD3, ::NodeSet{:C}, prefactor=1) where {A1,A2} = # (vel¯ - vel⁰ + δz * UBC) / δz²
     (@. rhs += prefactor * (DD3[1] * DD3[2] * vel¯ + (DD1 + DD2 - DD3[1] * DD3[2]) * vel⁰);
      rhs[1,1] += prefactor * DD3[2] * ubc.gradient; rhs)
-add_laplacian!(rhs, (lbc, vel⁰, vel⁺)::Tuple{ConstantValue,A2,A3}, DD1, DD2, DD3, ::NodeSet{:C}, prefactor=1) where {A2,A3} = # (8/3 lbc - 4 vel⁰ + 4/3 vel⁺) / δz²
-    (@. rhs += prefactor * ((DD1 + DD2 - 9/3 * DD3[1] * DD3[2] - DD3[2] * DD3[3]) * vel⁰ +
-                            (1/3 * DD3[1] * DD3[2] + DD3[2] * DD3[3]) * vel⁺);
-     rhs[1,1] += prefactor * 8/3 * DD3[1] * DD3[2] * lbc.value; rhs)
-add_laplacian!(rhs, (vel¯, vel⁰, ubc)::Tuple{A1,A2,ConstantValue}, DD1, DD2, DD3, ::NodeSet{:C}, prefactor=1) where {A1,A2} = # (4/3 vel¯ - 4 vel⁰ + 8/3 ubc) / δz²
-    (@. rhs += prefactor * ((DD3[1] * DD3[2] + 1/3 * DD3[2] * DD3[3]) * vel¯ +
-                            (DD1 + DD2 - DD3[1] * DD3[2] - 9/3 * DD3[2] * DD3[3]) * vel⁰);
-     rhs[1,1] += prefactor * 8/3 * DD3[2] * DD3[3] * ubc.value; rhs)
-add_laplacian!(rhs, (lbc, vel⁰, vel⁺)::Tuple{ConstantValue,A2,A3}, DD1, DD2, DD3, ::NodeSet{:I}, prefactor=1) where {A2,A3} = # (lbc - 2 vel⁰ + vel⁺) / δz²
-    (@. rhs += prefactor * ((DD1 + DD2 - DD3[1] * DD3[2] - DD3[2] * DD3[3]) * vel⁰ +
-                            DD3[2] * DD3[3] * vel⁺);
-     rhs[1,1] += prefactor * DD3[1] * DD3[2] * lbc.value; rhs)
-add_laplacian!(rhs, (vel¯, vel⁰, ubc)::Tuple{A1,A2,ConstantValue}, DD1, DD2, DD3, ::NodeSet{:I}, prefactor=1) where {A1,A2} = # (vel¯ - 2 vel⁰ + ubc) / δz²
-    (@. rhs += prefactor * (DD3[1] * DD3[2] * vel¯ +
-                            (DD1 + DD2 - DD3[1] * DD3[2] - DD3[2] * DD3[3]) * vel⁰);
-     rhs[1,1] += prefactor * DD3[2] * DD3[3] * ubc.value; rhs)
