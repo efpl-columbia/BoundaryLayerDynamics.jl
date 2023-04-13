@@ -206,12 +206,12 @@ strain_bc(bc::BoundaryCondition{T}, _, _) where T <: ConstantValue = bc
 
 # NOTE: it is always more accurate to interpolate first and square after
 add_interpolated_sq!(out, below, above, count = 1) = @. out += count * (below + above)^2 / 4
+add_interpolated_sq!(out, below::ConstantValue, above, count = 1) = @. out += count * (below.value + above)^2 / 4
+add_interpolated_sq!(out, below, above::ConstantValue, count = 1) = @. out += count * (below + above.value)^2 / 4
 
 # NOTE: these functions assume that the precomputed dynamic values are already
 # interpolated to the target-nodes, and are not values at the wall itself, i.e.
 # the function does not interpolate in this case and discards the non-boundary
 # values
-add_interpolated_sq!(out, below::DynamicValues, above, count = 1) = @. out += count * (below.values)^2 / 2
-add_interpolated_sq!(out, below, above::DynamicValues, count = 1) = @. out += count * (above.values)^2 / 2
-add_interpolated_sq!(out, below::ConstantValue, above, count = 1) = @. out += count * (below.value)^2 / 2
-add_interpolated_sq!(out, below, above::ConstantValue, count = 1) = @. out += count * (above.value)^2 / 2
+add_interpolated_sq!(out, below::DynamicValues, above, count = 1) = @. out += count * (below.values)^2
+add_interpolated_sq!(out, below, above::DynamicValues, count = 1) = @. out += count * (above.values)^2
