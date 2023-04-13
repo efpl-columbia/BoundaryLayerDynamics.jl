@@ -5,6 +5,9 @@ struct MolecularDiffusion <: ProcessDefinition
     diffusivity::Real
 end
 
+MolecularDiffusion(fields::NTuple{N,Symbol}, diffusivity) where N =
+    Tuple(MolecularDiffusion(f, diffusivity) for f in fields)
+
 struct DiscretizedMolecularDiffusion <: DiscretizedProcess
     field::Symbol
     diffusivity

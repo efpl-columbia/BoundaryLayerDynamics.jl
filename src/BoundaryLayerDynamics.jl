@@ -54,7 +54,12 @@ struct Model{T,P}
     function Model(resolution::NTuple{3,Integer}, domain::Domain{T}, processes;
             comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
         grid = Grid(resolution, comm = comm)
-        processes = [init_process(p, domain, grid) for p in processes]
+        processes = foldl(processes; init = []) do acc, p
+            # the list of processes is allowed to contain lists/tuples/generators
+            # so we wrap “naked” processes so they are also in the form of an iterable
+            p = p isa Union{Tuple,Array,Base.Generator} ? p : (p, )
+            append!(acc, init_process(p, domain, grid) for p in p)
+        end
         state = init_state(T, grid, state_fields(processes))
         physical_spaces = init_physical_spaces(transformed_fields(processes), domain, grid)
 
