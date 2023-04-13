@@ -53,9 +53,3 @@ add_laplacian!(rhs, (vel¯, vel⁰, vel⁺)::Tuple{A1,A2,A3}, DD1, DD2, DD3, ::N
     @. rhs += prefactor * (DD3[1] * DD3[2] * vel¯ +
                            (DD1 + DD2 - DD3[1] * DD3[2] - DD3[2] * DD3[3]) * vel⁰ +
                            DD3[2] * DD3[3] * vel⁺)
-add_laplacian!(rhs, (lbc, vel⁰, vel⁺)::Tuple{ConstantGradient,A2,A3}, DD1, DD2, DD3, ::NodeSet{:C}, prefactor=1) where {A2,A3} = # (- δz * LBC - vel⁰ + vel⁺) / δz²
-    (@. rhs += prefactor * ((DD1 + DD2 - DD3[2] * DD3[3]) * vel⁰ + DD3[2] * DD3[3] * vel⁺);
-     rhs[1,1] -= prefactor * DD3[2] * lbc.gradient; rhs)
-add_laplacian!(rhs, (vel¯, vel⁰, ubc)::Tuple{A1,A2,ConstantGradient}, DD1, DD2, DD3, ::NodeSet{:C}, prefactor=1) where {A1,A2} = # (vel¯ - vel⁰ + δz * UBC) / δz²
-    (@. rhs += prefactor * (DD3[1] * DD3[2] * vel¯ + (DD1 + DD2 - DD3[1] * DD3[2]) * vel⁰);
-     rhs[1,1] += prefactor * DD3[2] * ubc.gradient; rhs)

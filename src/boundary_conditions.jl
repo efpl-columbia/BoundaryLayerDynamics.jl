@@ -16,8 +16,8 @@ struct BoundaryCondition{BC,Nb,Na,C,A}
 end
 
 # set up frequency domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid::Grid) where T
-    type = init_bctype(T, type)
+function BoundaryCondition(::Type{T}, type, grid::Grid; kwargs...) where T
+    type = init_bctype(T, type; kwargs...)
     buffer = zeros(Complex{T}, fdsize(grid))
     pmin = ntuple(i -> proc_for_layer(grid, i), 3)
     pmax = ntuple(i -> proc_for_layer(grid, -i), 3)
@@ -25,8 +25,8 @@ function BoundaryCondition(::Type{T}, type, grid::Grid) where T
 end
 
 # set up physical domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing) where T
-    type = init_bctype(T, type)
+function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing; kwargs...) where T
+    type = init_bctype(T, type; kwargs...)
     buffer = zeros(T, pdsize(grid, dealiasing))
     pmin = ntuple(i -> proc_for_layer(grid, i), 3)
     pmax = ntuple(i -> proc_for_layer(grid, -i), 3)
@@ -38,7 +38,8 @@ struct ConstantValue{T}
 end
 
 struct ConstantGradient{T}
-    gradient::T
+    gradient::T # d/dx3
+    difference::T # Δζ d/dζ
 end
 
 const LowerBoundary{BC} = BoundaryCondition{BC,nothing,Na} where {Na}
@@ -49,19 +50,21 @@ struct DynamicValues{T}
 end
 
 # convert boundary conditions into concrete types
-init_bctype(::Type{T}, type::Symbol) where T = init_bctype(T, Val(type), zero(T))
-init_bctype(::Type{T}, type::Pair) where T = init_bctype(T, Val(first(type)), last(type))
-init_bctype(::Type{T}, ::Val{:dirichlet}, value) where T = ConstantValue(convert(T, value))
-init_bctype(::Type{T}, ::Val{:neumann}, gradient) where T = ConstantGradient(convert(T, gradient))
-init_bctype(::Type{T}, ::Nothing) where T = nothing
-init_bctype(::Type{T}, ::Val{:dynamic}, dims::Tuple{Int,Int}) where T = DynamicValues(zeros(T, dims))
+init_bctype(::Type{T}, type::Symbol; kwargs...) where T = init_bctype(T, Val(type), zero(T); kwargs...)
+init_bctype(::Type{T}, type::Pair; kwargs...) where T = init_bctype(T, Val(first(type)), last(type); kwargs...)
+init_bctype(::Type{T}, ::Val{:dirichlet}, value; kwargs...) where T = ConstantValue(convert(T, value))
+init_bctype(::Type{T}, ::Val{:neumann}, gradient; dx3::T) where T = ConstantGradient(convert(T, gradient), convert(T, gradient * dx3))
+init_bctype(::Type{T}, ::Nothing; kwargs...) where T = nothing
+init_bctype(::Type{T}, ::Val{:dynamic}, dims::Tuple{Int,Int}; kwargs...) where T = DynamicValues(zeros(T, dims))
 
 
 function init_bcs(field, domain::Domain{T}, grid::Grid, opts...) where T
     # options passed on to boundary condition allow for initializing both
     # frequency-space and physical-space boundary conditions
-    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), grid, opts...)
-    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), grid, opts...)
+    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), grid, opts...;
+                            dx3 = domain.Dvmap(zero(T)) / grid.n3global)
+    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), grid, opts...;
+                            dx3 = domain.Dvmap(one(T)) / grid.n3global)
     (lbc, ubc)
 end
 
@@ -260,7 +263,7 @@ function layers_expand_full(field::AbstractArray{T},
     above = layer_above(field, bc_above)
 
     if BCb <: ConstantValue
-        l3 = boundary_layer(field, 3, bc_below, (above,))
+        l3 = boundary_layer(field, 3, bc_below, (above,)) # all processes participate
         if isnothing(Nb) # handle boundary after sending/receiving third layer
             l0 = below.value
             l1 = field[1]
@@ -278,7 +281,7 @@ function layers_expand_full(field::AbstractArray{T},
     end
 
     if BCa <: ConstantValue
-        l3 = boundary_layer(field, -3, bc_above, (below,))
+        l3 = boundary_layer(field, -3, bc_above, (below,)) # all processes participate
         if isnothing(Na) # handle boundary after sending/receiving third layer
             l0 = above.value
             l1 = field[end]
@@ -295,7 +298,41 @@ function layers_expand_full(field::AbstractArray{T},
         end
     end
 
-    # TODO: provide extrapolation for ConstantGradient BCs
+    if BCb <: ConstantGradient
+        l3 = boundary_layer(field, 3, bc_below, (above,)) # all processes participate
+        if isnothing(Nb) # handle boundary after sending/receiving third layer
+            l0 = below.difference
+            l1 = field[1]
+            l2 = length(field) >= 2 ? field[2] : above
+            # extrapolate with fourth-order accuracy
+            if T <: Complex
+                @. bc_below.buffer = (21 * l1 + 3 * l2 - l3) / 23
+                bc_below.buffer[1,1] -= 24 * l0 / 23
+            else
+                @. bc_below.buffer = (-24 * l0 + 21 * l1 + 3 * l2 - l3) / 23
+            end
+            # provide extrapolated value instead of boundary struct
+            below = bc_below.buffer
+        end
+    end
+
+    if BCa <: ConstantGradient
+        l3 = boundary_layer(field, -3, bc_above, (below,)) # all processes participate
+        if isnothing(Na) # handle boundary after sending/receiving third layer
+            l0 = - above.difference
+            l1 = field[end]
+            l2 = length(field) >= 2 ? field[end-1] : below
+            # extrapolate with fourth-order accuracy
+            if T <: Complex
+                @. bc_above.buffer = (21 * l1 + 3 * l2 - l3) / 23
+                bc_above.buffer[1,1] -= 24 * l0 / 23
+            else
+                @. bc_above.buffer = (-24 * l0 + 21 * l1 + 3 * l2 - l3) / 23
+            end
+            # provide extrapolated value instead of boundary struct
+            above = bc_above.buffer
+        end
+    end
 
     below, field..., above
 end
