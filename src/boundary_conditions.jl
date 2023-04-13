@@ -111,9 +111,8 @@ end
 
 # inner process
 function layer_below(layers, lower_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
-    r = MPI.Irecv!(lower_bc.buffer, Nb, MTAG_UP, lower_bc.comm)
-    MPI.Send(layers[end], Na, MTAG_UP, lower_bc.comm)
-    MPI.Wait!(r)
+    MPI.Sendrecv!(layers[end], lower_bc.buffer, lower_bc.comm;
+                  dest=Na, sendtag=MTAG_UP, source=Nb, recvtag=MTAG_UP)
     lower_bc.buffer
 end
 
@@ -150,9 +149,8 @@ end
 
 # inner process
 function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
-    r = MPI.Irecv!(upper_bc.buffer, Na, MTAG_DN, upper_bc.comm)
-    MPI.Send(layers[1], Nb, MTAG_DN, upper_bc.comm)
-    MPI.Wait!(r)
+    MPI.Sendrecv!(layers[1], upper_bc.buffer, upper_bc.comm;
+                  dest=Nb, sendtag=MTAG_DN, source=Na, recvtag=MTAG_DN)
     upper_bc.buffer
 end
 
