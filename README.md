@@ -36,3 +36,18 @@ flow dynamics with `evolve!`.
 
 If MPI has been initialized with `MPI.init()` before the model is created, the
 simulation is distributed among the available processes.
+
+## Documentation
+
+The documentation in the `docs` folder relies on
+[Documenter.jl](https://github.com/JuliaDocs/Documenter.jl).
+
+To build the documentation, run `julia docs/make.jl`.
+This will create the HTML documentation in the `docs/build` directory.
+The `make.jl` takes care of setting up the package environment so it can be run
+from anywhere as long as it has access to `Pkg` from the standard library.
+
+To work on the documentation, it is recommended to use
+[LiveServer.jl](https://github.com/tlienart/LiveServer.jl).
+If it is installed in the global environment, a development server can be
+launched with `julia -e 'using LiveServer; servedocs()'` from the project root.
