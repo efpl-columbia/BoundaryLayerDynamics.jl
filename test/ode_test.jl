@@ -72,14 +72,16 @@ function test_checkpoints(alg)
     nt = 10
     dt = t[end] / nt
 
-    for checkpoints in (nothing, dt:dt:t[end], 5*dt:5*dt:t[end], 3*dt:3*dt:2*t[end])
+    for checkpoints in (nothing, dt:dt:t[end]-dt, 5*dt:5*dt:t[end], 3*dt:3*dt:2*t[end])
         empty!(times)
-        prob = BLD.ODEProblem(rate!, [0.0], t)
+        prob = BLD.ODEProblem(rate!, zeros(1), t)
         if checkpoints == nothing
             BLD.solve!(prob, alg(), dt, checkpoints = checkpoints)
+            @test BLD.state(prob) ≈ ones(1)
             @test times == []
         elseif maximum(checkpoints) <= t[end]
             BLD.solve!(prob, alg(), dt, checkpoints = checkpoints)
+            @test BLD.state(prob) ≈ ones(1)
             @test times ≈ collect(checkpoints)
         else
             @test_throws ErrorException BLD.solve!(prob, alg(), dt, checkpoints = checkpoints)
@@ -87,7 +89,23 @@ function test_checkpoints(alg)
     end
 end
 
+function test_rounding(T)
+    nt = 3
+    dt = one(T) / nt
+    for i in (-5, 5)
+        t = nextfloat(one(T), i)
+        times = []
+        rate!(du, u, t; checkpoint = false) = (checkpoint && push!(times, t); du .= 1)
+        p = BLD.ODEProblem(rate!, zeros(T, 1), (zero(t), t))
+        BLD.solve!(p, SSPRK33(), dt, checkpoints=range(dt, t, nt))
+        @test BLD.state(p) ≈ ones(T, 1)
+        @test times ≈ T[1//3, 2//3, 3//3]
+    end
+end
+
 @timeit "ODE" @testset "ODE Solution Methods" begin
+    test_rounding(Float32)
+    test_rounding(Float64)
     for (alg, order) in ((Euler, 1), (AB2, 2), (SSPRK22, 2), (SSPRK33, 3))
         test_constant_growth(alg)
         test_projection(alg)

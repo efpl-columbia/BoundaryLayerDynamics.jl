@@ -205,7 +205,7 @@ function solve!(prob::ODEProblem{Tt},
 
     # make sure that checkpoints are valid and in the right format
     checkpoints = if isnothing(checkpoints)
-        (Inf, )
+        ()
     elseif minimum(checkpoints) <= prob.t[] || maximum(checkpoints) > prob.tmax
         error("Checkpoints outside of time range")
     else
@@ -213,20 +213,30 @@ function solve!(prob::ODEProblem{Tt},
     end
 
     for t in checkpoints
-        # compute number of steps to next checkpoint or end of simulation
-        nt = approxdiv(min(prob.tmax, t) - prob.t[], dt)
-
-        # perform steps (the order of these commands is important for correctness!)
-        for it in 1:nt
-            perform_step!(prob, dt, buffer)
-            # update time: make sure time matches exactly at checkpoints
-            prob.t[] = (prob.t[] + dt ≈ t) ? t : prob.t[] + dt
-            # notify `prob.rate!` if the last evaluation is at a checkpoint
-            kwargs = (it == nt && prob.t[] == t) ? (checkpoint = true,) : ()
-            prob.rate!(prob.du, prob.u, prob.t[]; kwargs...)
-        end
+        step_to!(prob, buffer, t, dt, true)
     end
+    step_to!(prob, buffer, prob.tmax, dt, false)
     prob.u
+end
+
+function step_to!(prob::ODEProblem{Tt}, buffer::ODEBuffer,
+        t::Tt, dt::Tt, checkpoint::Bool) where {Tt}
+    if prob.t[] ≈ t # already there
+        checkpoint && prob.t[] != t && error("Could not hit checkpoint t=$t exactly")
+        prob.t[] = t # set time to exact value
+        return prob
+    end
+    nt = approxdiv(t - prob.t[], dt)
+    for it in 1:nt
+        # the order of these commands is important for correctness!
+        perform_step!(prob, dt, buffer)
+        # update time: make sure time matches exactly at checkpoints
+        prob.t[] = (prob.t[] + dt ≈ t) ? t : prob.t[] + dt
+        # notify `prob.rate!` if the last evaluation is at a checkpoint
+        kwargs = (it == nt && checkpoint) ? (checkpoint = true,) : ()
+        prob.rate!(prob.du, prob.u, prob.t[]; kwargs...)
+    end
+    prob
 end
 
 end # module ODEMethods
