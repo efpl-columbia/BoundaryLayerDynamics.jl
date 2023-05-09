@@ -86,7 +86,7 @@ function interpolate(field, term, domain::Domain{T}, grid) where T
     field = layers_i2c(field, init_bcs(term, domain, grid, pdims)...)
     interpolated = zeros(T, pdims..., length(field)-1)
     for i3=1:size(interpolated, 3)
-        interpolate!(interpolated[:,:,i3], field[i3:i3+1]...)
+        interpolate!(view(interpolated, :, :, i3), field[i3:i3+1]...)
     end
     interpolated
 end
