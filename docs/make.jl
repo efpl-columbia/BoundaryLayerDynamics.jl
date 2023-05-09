@@ -31,5 +31,6 @@ makedocs(sitename = "BoundaryLayerDynamics.jl",
                   "wall-models.md",
                  ],
          modules = [BoundaryLayerDynamics],
-         format = Documenter.HTML(edit_link = nothing, prettyurls = false),
+         format = Documenter.HTML(edit_link = nothing,
+                                  prettyurls = get(ENV, "PRETTY_URLS", "") == "true"),
         )
