@@ -282,7 +282,8 @@ function process_log!(pm::ProgressMonitor, rates, t)
     pm.sampling[] || return
     pm.showprogress || return
 
-    eta = if isfinite(pm.remaining[])
+    # infinite or very large times cannot be represented as Int of nanoseconds
+    eta = if pm.remaining[] < 9e9
         eta = Second(ceil(pm.remaining[]))
         Dates.format(Time(Nanosecond(eta)), "H:MM:SS")
     else
