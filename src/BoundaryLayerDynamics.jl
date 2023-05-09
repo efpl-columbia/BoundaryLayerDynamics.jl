@@ -31,7 +31,7 @@ include("Processes.jl")
 include("ODEMethods.jl")
 
 using .Helpers: Helpers
-using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for convenience in tessts
+using .Grids: StaggeredFourierGrid as Grid, NodeSet # nodes exported for convenience in tests
 using .PhysicalSpace: init_physical_spaces
 using .Processes
 using .Domains

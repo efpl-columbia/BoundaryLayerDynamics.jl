@@ -61,7 +61,7 @@ pdsize(grid, ::NodeSet{:C}, dealiasing) = (pdsize(grid, dealiasing)..., grid.n3c
 pdsize(grid, ::NodeSet{:I}, dealiasing) = (pdsize(grid, dealiasing)..., grid.n3i)
 pdsize(grid, nodes::NodeSet) = pdsize(grid, nodes, nothing)
 
-# returns a range of rational ζ-values between 0 and 1
+# returns a range of rational ξ-values between 0 and 1
 h1range(pdims; centered = false) = LinRange(0//1, 1//1, 2*pdims[1]+1)[(centered ? 2 : 1):2:end-1]
 h2range(pdims; centered = false) = LinRange(0//1, 1//1, 2*pdims[2]+1)[(centered ? 2 : 1):2:end-1]
 h1range(grid, dealiasing; kwargs...) = h1range(pdsize(grid, dealiasing); kwargs...)
