@@ -2,7 +2,7 @@ function test_all_log_fields(; n=4)
 
     Random.seed!(8792991517) # same seed for each process
 
-    domain = Domain(rand(3), FreeSlipBoundary(), RoughWall(1e-4))
+    domain = Domain((rand(), rand(), rand()), FreeSlipBoundary(), RoughWall(1e-4))
     processes = incompressible_flow(1e-6, sgs_model=StaticSmagorinskyModel())
     model = Model((n,n,n), domain, processes)
     dt = 1e-3
@@ -25,7 +25,7 @@ end
 function test_velocity_log(; n=4)
 
     Random.seed!(92719753017) # same seed for each process
-    domain = Domain(rand(3), FreeSlipBoundary(), FreeSlipBoundary())
+    domain = Domain((rand(), rand(), rand()), FreeSlipBoundary(), FreeSlipBoundary())
     u1, u2, f1, f2 = rand(4)
     processes = [ConstantSource(:vel1, f1), ConstantSource(:vel2, f2)]
     model = Model((n, n, n), domain, processes)
