@@ -212,12 +212,14 @@ function evolve!(model::Model{T}, tspan;
     @timeit log.timer "Time integration" begin
         # allow skipping integration by setting tspan = 0,
         # e.g. to compute RHS terms only
-        t1 < t2 && solve!(prob, method, dt, checkpoints=t1+dt:dt:t2)
+        if t2 > t1
+            nt = Helpers.approxdiv(t2-t1, dt)
+            solve!(prob, method, dt, checkpoints=range(t1+dt, t2, nt))
+        end
     end
 
     # write remaining output data
     flush!(log)
 end
-
 
 end # module BoundaryLayerDynamics

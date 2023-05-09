@@ -21,6 +21,25 @@ function test_all_log_fields(; n=4)
     end
 end
 
+struct TimeValuesLog
+    t::Vector{Float64}
+    TimeValuesLog() = new([])
+end
+
+BLD.Logging.prepare_samples!(log::TimeValuesLog, t) = push!(log.t, t)
+
+function test_log_times()
+    domain = Domain((1, 1, 1), SmoothWall(), SmoothWall())
+    model = Model((4, 4, 4), domain, [ConstantSource(:vel1)])
+    dt = 1/3
+    # make sure that each time stamp is logged even when dividing t by dt has
+    # floating-point errors
+    for t in nextfloat.(1.0, (-5, 5))
+        log = TimeValuesLog()
+        evolve!(model, t, dt=dt, output = log)
+        @test log.t ≈ [i//3 for i in 0:3]
+    end
+end
 
 function test_velocity_log(; n=4)
 
@@ -61,6 +80,7 @@ function test_velocity_log(; n=4)
 end
 
 @timeit "Logging" @testset "Logging Mean Statistics" begin
+    test_log_times()
     test_all_log_fields()
     test_velocity_log()
 end
