@@ -19,8 +19,7 @@ show_output && println("Testing BoundaryLayerDynamics.jl... ($(nproc == 1 ? "sin
 
 # allow selecting individual tests through command-line arguments
 # (starting Julia 1.3, these can be passed using Pkg.test(..., test_args=``))
-const tests = ["grid", "transform", "derivatives", "diffusion", "advection",
-               "pressure", "ode", "laminar", "output", "les", "logging", "abl"]
+const tests = map(fn -> first(split(fn, '_')), filter(endswith("_test.jl"), readdir(@__DIR__)))
 selection = filter(a -> !startswith(a, '-'), ARGS)
 selection == ["all"] && pop!(selection)
 isempty(selection) && append!(selection, tests)
