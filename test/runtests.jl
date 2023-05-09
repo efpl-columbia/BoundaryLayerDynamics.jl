@@ -36,4 +36,4 @@ end
 
 show_output && print_timer()
 parallel && MPI.Finalize()
-parallel || serial || run_mpi_test("runtests.jl", 4, tests)
+parallel || serial || run_mpi_test("runtests.jl", 4, selection)
