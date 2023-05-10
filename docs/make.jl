@@ -32,5 +32,6 @@ makedocs(sitename = "BoundaryLayerDynamics.jl",
                  ],
          modules = [BoundaryLayerDynamics],
          format = Documenter.HTML(edit_link = nothing,
-                                  prettyurls = get(ENV, "PRETTY_URLS", "") == "true"),
+                                  prettyurls = get(ENV, "PRETTY_URLS", "") == "true",
+                                  sidebar_sitename = false),
         )
