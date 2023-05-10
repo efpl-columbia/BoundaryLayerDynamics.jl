@@ -47,40 +47,6 @@ function couette(y, t; tol=eps()/8, kmax=100_000)
 end
 
 """
-Analytical solution for the first component of the velocity in a
-Taylor-Green vortex. The solution is normalized as
-
-u₁ = A taylor_green_vortex_u1(x₁β, x₂β, tνβ², α/β)
-u₂ = B taylor_green_vortex_u1(x₁β, x₂β, tνβ², α/β)
-
-where A, B, α, and β are the parameters of the initial conditions
-
-u₁(t₀) = A cos(x₁α) sin(x₂β)
-u₂(t₀) = B sin(x₁α) cos(x₂β)
-
-under the restriction that B = - Aα/β from the continuity equation.
-The function works for both scalar and array inputs.
-"""
-taylor_green_vortex_u1(x, y, t, λ=one(eltype(x))) = @. cos(λ*x) * sin(y) * exp(-(1+λ^2)*t)
-
-"""
-Analytical solution for the second component of the velocity in a
-Taylor-Green vortex. The solution is normalized as
-
-u₁ = A taylor_green_vortex_u1(x₁β, x₂β, tνβ², α/β)
-u₂ = B taylor_green_vortex_u1(x₁β, x₂β, tνβ², α/β)
-
-where A, B, α, and β are the parameters of the initial conditions
-
-u₁(t₀) = A cos(x₁α) sin(x₂β)
-u₂(t₀) = B sin(x₁α) cos(x₂β)
-
-under the restriction that B = - Aα/β from the continuity equation.
-The function works for both scalar and array inputs.
-"""
-taylor_green_vortex_u2(x1, x2, t, λ=one(eltype(x1))) = @. sin(λ*x1) * cos(x2) * exp(-(1+λ^2)*t)
-
-"""
 Compute the number of time steps necessary for viscous stability given a
 maximum Courant number. The default Cmax of 1/2 appears to be stable for the
 laminar problems in this file and the default SSP-RK33 time stepping.
@@ -95,9 +61,7 @@ function dx3_min(δ::T, N3, η::T) where T
     minimum(Dx3.(ζ)) / N3
 end
 
-function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
-        t = one(T), ν = one(T), δ = one(T), vel_bc = zero(T), f = zero(T),
-        dir = (one(T), zero(T)), η = nothing, method = SSPRK33())
+function laminar_flow_error(T, Nh, Nv, Nt, u_exact; vel_bc = zero(T), f = zero(T), t, ν, δ, dir, η, method)
 
     dir = dir ./ sqrt(sum(dir.^2)) # normalize direction vector
     lbc = CustomBoundary(vel1 = :dirichlet => -vel_bc * dir[1],
@@ -119,15 +83,13 @@ function laminar_flow_error(T, Nh, Nv, Nt, u_exact;
     sqrt(global_maximum(abs2.(εu1) .+ abs2.(εu2) .+ abs2.(εu3)) / global_maximum(abs2.(uref)))
 end
 
-poiseuille_error(T, Nh, Nv, Nt; t = one(T) / 4, ν = one(T), δ = one(T), uτ = one(T),
-                 dir = (one(T), zero(T)), η = nothing) =
-    laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * poiseuille(y / δ, t * ν / δ^2),
-    t=t, ν=ν, δ=δ, dir=dir, f=(uτ^2/δ), η=η)
+poiseuille_error(T, Nh, Nv, Nt; t, ν, δ, uτ, dir, η, method) =
+    laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * poiseuille(y / δ, t * ν / δ^2);
+                       t=t, ν=ν, δ=δ, dir=dir, f=(uτ^2/δ), η=η, method=method)
 
-couette_error(T, Nh, Nv, Nt; t = one(T) / 16, ν = one(T), δ = one(T), uτ = one(T),
-              dir = (one(T), zero(T)), η = nothing) =
-    laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * couette(y/δ, t*ν/δ^2),
-    t=t, ν=ν, δ=δ, dir=dir, vel_bc=(uτ*uτ*δ/ν), η=η)
+couette_error(T, Nh, Nv, Nt; t, ν, δ, uτ, dir, η, method) =
+    laminar_flow_error(T, Nh, Nv, Nt, (y,t) -> (uτ^2*δ/ν) * couette(y/δ, t*ν/δ^2);
+                       t=t, ν=ν, δ=δ, dir=dir, vel_bc=(uτ*uτ*δ/ν), η=η, method=method)
 
 """
 Return the error for a Taylor-Green vortex with a given set of parameters and a
@@ -138,33 +100,35 @@ direction we cannot set an arbitrary orientation since we have to be able to
 find a domain size for which the problem is periodic.
 """
 function taylor_green_vortex_error(T, Nh, Nv, Nt;
-        t = one(T), ν = one(T), α = one(T), β = one(T), A = one(T),
-        dir = (zero(T), zero(T)), η = nothing, method = SSPRK33())
+        t = one(T), ν = one(T), α = one(T), β = one(T), γ = one(T),
+        U = one(T), W = nothing, η = nothing, method = SSPRK33())
 
-    λ = α / β
-    B = - A * λ
-
-    ds, mapping, u1ref, u2ref, u3ref = if dir[1] == dir[2] == zero(T)
-        # vortex in horizontal plane
-        ((2*π/α, 2*π/β, one(T)),
-         isnothing(η) ? nothing : SinusoidalMapping(η, :symmetric),
-         (x,y,z,t) -> A * taylor_green_vortex_u1(β*x, β*y, β^2*ν*t, λ),
-         (x,y,z,t) -> B * taylor_green_vortex_u2(β*x, β*y, β^2*ν*t, λ),
-         (x,y,z,t) -> zero(T))
-    else
+    # define reference solution based on type of problem that is selected
+    tg1(x, y, t) = sin(x) * cos(y) * exp(-t)
+    tg2(x, y, t) = -cos(x) * sin(y) * exp(-t)
+    u1ref, u2ref, u3ref, bc = if isnothing(W) # W is only used for horizontal case
         # vortex in vertical plane
-        dir = dir ./ sqrt(sum(dir.^2)) # normalize direction vector
-        ((iszero(dir[1]) ? one(T) : 2*π/α/dir[1], iszero(dir[2]) ? one(T) : 2*π/α/dir[2], π/β),
-         isnothing(η) ? nothing : SinusoidalMapping(η, :symmetric),
-         (x,y,z,t) -> A * taylor_green_vortex_u1(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ) * dir[1],
-         (x,y,z,t) -> A * taylor_green_vortex_u1(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ) * dir[2],
-         (x,y,z,t) -> B * taylor_green_vortex_u2(β*(x*dir[1]+y*dir[2]), π/2+β*z, β^2*ν*t, λ))
+        ((x,y,z,t) -> U*α*γ * tg1(α*x + β*y, γ*z, (α^2+β^2+γ^2)*ν*t),
+         (x,y,z,t) -> U*β*γ * tg1(α*x + β*y, γ*z, (α^2+β^2+γ^2)*ν*t),
+         (x,y,z,t) -> U*(α^2+β^2) * tg2(α*x + β*y, γ*z, (α^2+β^2+γ^2)*ν*t),
+         FreeSlipBoundary())
+    else
+        # vortex in horizontal plane
+        iszero(W) || error("TODO: implement non-zero u₃")
+        ((x,y,z,t) -> U * β * tg1(α*x, β*y, (α^2+β^2)*ν*t),
+         (x,y,z,t) -> U * α * tg2(α*x, β*y, (α^2+β^2)*ν*t),
+         (x,y,z,t) -> W,
+         CustomBoundary(vel1 = :neumann, vel2 = :neumann, vel3 = :dirichlet => W))
     end
+
+    ds = convert.(T, (2*π/α, 2*π/β, 2*π/γ))
+    mapping = isnothing(η) ? nothing : SinusoidalMapping(η, :symmetric)
+    domain = Domain(ds, bc, bc, mapping)
+    processes = incompressible_flow(ν, constant_forcing = 0)
+    model = Model((Nh, Nh, Nv), domain, processes)
 
     ic = NamedTuple(vel => (x,y,z) -> uref(x,y,z,zero(T)) for (vel, uref) in
                     zip((:vel1, :vel2, :vel3), (u1ref, u2ref, u3ref)))
-    model = Model((Nh, Nh, Nv), Domain(ds, FreeSlipBoundary(), FreeSlipBoundary()),
-                        incompressible_flow(ν, constant_forcing = (0,0)))
     initialize!(model; ic...)
     evolve!(model, t, dt = t / Nt, method = method, verbose = false)
 
@@ -174,11 +138,10 @@ function taylor_green_vortex_error(T, Nh, Nv, Nt;
     ε1 = model[:vel1] .- T[u1ref(x...,t) for x=xh]
     ε2 = model[:vel2] .- T[u2ref(x...,t) for x=xh]
     # compute error before interpolation (bc3 works for error as well)
-    # TODO: figure out why the error is not similar when first interpolating
-    # and comparing values on I-nodes
-    ε3 = BoundaryLayerDynamics.State.interpolate(model[:vel3] .- T[u3ref(x...,t) for x=xv], :vel3, model.domain, model.grid)
+    ε3 = BoundaryLayerDynamics.State.interpolate(model[:vel3] .- T[u3ref(x...,t) for x=xv],
+                                                 :vel3, model.domain, model.grid)
 
     # maximum relative error, based on global velocity to avoid divison by zero
-    sqrt(global_maximum(abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) / global_maximum(
-        T[abs2(u1ref(x...,t)) + abs2(u2ref(x...,t)) + abs2(u3ref(x...,t)) for x=xh]))
+    uref_max = exp(-ν * t * (α^2 + β^2 + (isnothing(W) ? γ^2 : 0)))
+    sqrt(global_maximum(abs2.(ε1) .+ abs2.(ε2) .+ abs2.(ε3)) / uref_max)
 end

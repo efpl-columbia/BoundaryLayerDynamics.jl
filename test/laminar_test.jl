@@ -1,13 +1,14 @@
 include("laminar_flow_problems.jl")
 
-function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false)
+function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false, seed = 62275)
+    Random.seed!(seed) # same seed for each process
+    method = SSPRK22() # used for tests of spatial convergence
 
     # use a progression of small integers that are close to equidistant in log-space
-    N = filter(n -> n>=Nz_min, [11, 14, 18, 24, 32])
-    Random.seed!(363613674) # same seed for each process
+    N = filter(n -> n>=Nz_min, [11, 14, 18, 24])
 
-    # parameter for grid stretching, η ∈ [0.5, 0.75]
-    η = grid_stretching ? 0.5 + rand() / 4 : nothing
+    # parameter for grid stretching, η ∈ [0.4, 0.6]
+    η = grid_stretching ? 0.4 + rand() / 5 : nothing
 
     # parameters for Poiseuille & Couette flow
     ν  = one(T) / 4 * 3 + rand(T) / 2
@@ -15,33 +16,51 @@ function test_laminar_flow_convergence(T, Nz_min = 3; grid_stretching = false)
     δ  = one(T) / 4 * 3 + rand(T) / 2
     uτ = one(T) / 4 * 3 + rand(T) / 2
     t  = (δ^2 / ν) / 6
-    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν, η=η, Cmax=one(T)/8)
+    Nt = Nt_viscous(T, N[end], t=t, δ=δ, ν=ν, η=η, Cmax=one(T)/4)
 
-    εp = poiseuille_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
-    εc =    couette_error.(T, 3, N, Nt, t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η)
+    params = (t=t, ν=ν, δ=δ, uτ=uτ, dir=ex, η=η, method=method)
+    εp = poiseuille_error.(T, 3, N, Nt; params...)
+    εc =    couette_error.(T, 3, N, Nt; params...)
 
     # parameters for Taylor-Green vortex
-    A  = one(T) / 4 * 3 + rand(T) / 2
     α  = one(T) / 4 * 3 + rand(T) / 2
     β  = one(T) / 4 * 3 + rand(T) / 2
-    t = 1 / ((α^2 + β^2) * ν)
-    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t, Cmax=one(T)/16)
+    γ  = one(T) / 4 * 3 + rand(T) / 2
+    U  = one(T) / 4 * 3 + rand(T) / 2
+    t = 1 / ((α^2 + β^2 + γ^2) * ν)
+    Nt = Nt_viscous(T, N[end], δ=T(π)/(2*β), ν=ν, t=t, Cmax=one(T)/4)
 
-    εtgv = taylor_green_vortex_error.(T, 3, N, Nt, t=t, ν=ν, α=α, β=β, A=A, dir=ex, η=η)
-    εtgh = taylor_green_vortex_error.(T, 3, Nz_min, N,  t=t, ν=ν, α=α, β=β, A=A, η=η)
+    # vortex in vertical plane measures convergence in space
+    params = (t=t, ν=ν, α=α, β=β, γ=γ, U=U, η=η)
+    εtgv = taylor_green_vortex_error.(T, 3, N, Nt; method=method, params...)
 
-    @test εp[end] < 1e-3
-    @test εc[end] < 1e-3
-    @test εtgv[end] < 2e-3
-    @test εtgh[end] < 1e-5
+    # vortex in horizontal plane measures convergence in time
+    params = (params..., W=zero(T))
+    εtgeu = taylor_green_vortex_error.(T, 3, Nz_min, N; method=Euler(), params...)
+    εtgab = taylor_green_vortex_error.(T, 3, Nz_min, N; method=AB2(), params...)
+    εtgr2 = taylor_green_vortex_error.(T, 3, Nz_min, N; method=SSPRK22(), params...)
+    εtgr3 = taylor_green_vortex_error.(T, 3, Nz_min, N; method=SSPRK33(), params...)
 
-    # TODO: check if these bounds can be made tighter
-    test_convergence(N, εp, order=2, threshold_slope=0.875)
-    test_convergence(N, εc, order=2, threshold_slope=0.925)
-    test_convergence(N, εtgv, order=2)
-    test_convergence(N, εtgh, order=3)
+    # these threshold values have been checked with a number of different seeds
+    # and should be fairly robust even if some small details of the
+    # implementation are changed and the results are no longer numerically
+    # identical
+    @test εp[end] < (grid_stretching ? 1e-3 : 2e-3)
+    @test εc[end] < (grid_stretching ? 1e-3 : 5e-4)
+    @test εtgv[end] < (grid_stretching ? 7e-3 : 5e-3)
+    test_convergence(N, εp, order=2, threshold_slope=0.95)
+    test_convergence(N, εc, order=2, threshold_slope=0.9)
+    test_convergence(N, εtgv, order=2, threshold_slope=0.94)
+    @test εtgeu[end] < 2e-2
+    @test εtgab[end] < 4e-4
+    @test εtgr2[end] < 2e-4
+    @test εtgr3[end] < 2e-6
+    test_convergence(N, εtgeu, order=1, threshold_slope=0.99)
+    test_convergence(N, εtgab, order=2, threshold_slope=0.98)
+    test_convergence(N, εtgr2, order=2, threshold_slope=0.99)
+    test_convergence(N, εtgr3, order=3, threshold_slope=0.99)
 
-    N, εp, εc, εtgv, εtgh # return for plotting in interactive usage
+    N, εp, εc, εtgv, εtgeu, εtgab, εtgr2, εtgr3 # return for plotting in interactive usage
 end
 
 function test_constant_flux_poiseuille(nz)
@@ -79,7 +98,6 @@ function test_constant_flux_poiseuille(nz)
     @test all(diff(ε_constant_flux) .< 0)
     @test ε_constant_flux[end] < 1e-6 # should be the case for nz≥4
 end
-
 
 @timeit "Laminar Flows" @testset "Laminar Flow Solutions" begin
 
