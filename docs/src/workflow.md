@@ -67,7 +67,7 @@ function run_dns()
     domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
     grid_size = (256, 192, 128)
     processes = incompressible_flow(ν, constant_flux = 1)
-    abl = Model(domain, grid_size, processes)
+    abl = Model(grid_size, domain, processes)
 
     u0(x,y,z) = (1 - (z-1)^2)*3/2
     initialize!(abl, vel1 = u0)
