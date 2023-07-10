@@ -14,32 +14,32 @@ Both for reproducibility and convenience, it is recommended to save the commands
 ## Adding `BoundaryLayerDynamics` to the Project
 
 To set up and run a simulation, the `BoundaryLayerDynamics` package needs to be in the Julia load path.
-This is best achieved by adding the package to the project environment.
-
-!!! note
-
-    `BoundaryLayerDynamics` is currently not registered in the Julia package registry, so running
-    `Pkg.add("BoundaryLayerDynamics")` won’t work.
-
-First, a copy of the BoundaryLayerDynamics.jl repository should be obtained with either
-
-1. a `git clone` to a single directory that will be shared between projects using the `BoundaryLayerDynamics` package,
-1. a `git clone` to a subdirectory of the current project,
-1. a `git clone` directly into the directory of the project, directly using the BoundaryLayerDynamics.jl repository as basis for the project,
-1. or `git submodule add` after setting up a new Git repository for the project.
-
-In all cases except for the third option, the `BoundaryLayerDynamics` package needs to be added to the project environment.
-This is achieved by running Julia with `--project=path/to/project` and adding `BoundaryLayerDynamics` as a development dependency:
+This is best achieved by adding the package to the project-specific environment.
 
 ```juliarepl
 julia> import Pkg
-julia> Pkg.develop(path="path/to/BoundaryLayerDynamics.jl")
+julia> Pkg.add("BoundaryLayerDynamics")
 ```
 
-Any changes that are made to the `BoundaryLayerDynamics` code are reflected immediately and you do not have to run `Pkg.update()`, unless you want to update other dependencies.
+## Making Project-Specific Modifications
+
+Simulations may require functionality that is not currently implemented in the `BoundaryLayerDynamics` package.
+New [physical processes](@ref Physical-Processes), [time-integration methods](@ref Time-Integration-Methods), and [output modules](@ref Output-Modules) can be defined in the user code and simply passed to the package functions, although this may require adding a few methods to unexported functions.
 
 !!! note
+    Consider contributing on [GitHub](https://github.com/efpl-columbia/BoundaryLayerDynamics.jl) for functionality that may be of interest to others as well.
+    It is recommended to open an issue to discuss new functionality before implementing it, as 1) there may already be partial implementations from other people, 2) we can discuss how the functionality is best integrated into the existing code, and 3) the functionality may be outside the scope of BoundaryLayerDynamics.jl.
 
+If a project requires significant changes to the code, it may be easier to directly modify the code of BoundaryLayerDynamics.jl.
+There are a number of options to use such a modified version of the package in simulations:
+
+1. Clone the package repository and use that folder/project both for package modifications and simulation setup code.
+1. Push a clone with the required modifications to a separate GitHub repository and provide the full URL when [`add`](https://pkgdocs.julialang.org/v1/repl/#repl-add)ing the package to the simulation environment.
+1. Make modifications in a local clone of the package repository that is added to the simulation environment with [`develop`](https://pkgdocs.julialang.org/v1/repl/#repl-develop).
+   This way, any changes that are made to the `BoundaryLayerDynamics` code are reflected immediately and you do not have to run [`update`](https://pkgdocs.julialang.org/v1/repl/#repl-update) unless you want to update other dependencies.
+   The clone can be created by `develop` (with the `--shared` or `--local` arguments) or manually at a convenient location, possibly as a Git submodule or in a folder shared between multiple simulations.
+
+!!! note
     Adding the parent folder of the `BoundaryLayerDynamics` package to the load path using
     `push!(LOAD_PATH, ...)` is possible but not recommended, as this requires
     that all dependencies of `BoundaryLayerDynamics` (such as the `FFTW` package) are installed
