@@ -130,7 +130,10 @@ However, there are a number of issues that may arise when working with MPI paral
 
 [MPI.jl](https://github.com/JuliaParallel/MPI.jl) provides its own MPI libraries by default.
 On most HPC systems, it is better to use the system-provided libraries instead.
-As documented [here](https://juliaparallel.org/MPI.jl/stable/configuration/#Using-a-system-provided-MPI-backend), this can be achieved by running `MPI.MPIPreferences.use_system_binary()`.
+As documented [here](https://juliaparallel.org/MPI.jl/stable/configuration/#using_system_mpi), this can be achieved by running `MPI.MPIPreferences.use_system_binary()`.
+
+!!! warning
+    Recent versions of the HDF5 library load their own MPI dependencies in a way that does may not match the system MPI and can result in crashes. See [this issue](https://github.com/JuliaIO/HDF5.jl/issues/1079) for details and workarounds.
 
 ### Avoid Precompilation Errors
 
