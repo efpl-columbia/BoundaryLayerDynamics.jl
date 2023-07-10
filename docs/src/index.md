@@ -26,3 +26,10 @@ It also documents the mathematical concepts that the computational model is base
 
 The **[Evolution in Time](@ref)** page explains how to run a simulation using [`evolve!`](@ref), after configuring the [time-integration method](@ref Time-Integration-Methods) and the [output modules](@ref Output-Modules).
 It also documents how the time integration handles processes that are assumed to act instantaneously such as the pressure in incompressible flows.
+
+## Further Resources
+
+You can obtain the code, report issues, or suggest improvements in the [GitHub repository](https://github.com/efpl-columbia/BoundaryLayerDynamics.jl).
+
+A paper describing the motivation for the project, the mathematical and physical models, their validation, as well as some performance measurements is currently under review and can be accessed [here](https://doi.org/10.5194/egusphere-2023-1071).
+Please cite this preprint if you use BoundaryLayerDynamics.jl in your research.
