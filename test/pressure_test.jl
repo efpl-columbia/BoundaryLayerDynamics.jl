@@ -75,9 +75,61 @@ function test_pressure_solver(N)
     @test w_pd ≈ bc3 * ones(T, size(w_pd))
 end
 
+function ke_pressure(n, bc, η = nothing)
+    # set up random velocity field
+    mapping = isnothing(η) ? () : (SinusoidalMapping(η, :symmetric),)
+    domain = Domain((1, 1, 1), bc, bc, mapping...)
+    model = Model((n, n, n), domain, [Pressure()])
+
+    # initialize to random divergence-free field and store copy
+    vel0(x, y, z) = rand()
+    initialize!(model, vel1 = vel0, vel2 = vel0, vel3 = vel0)
+    BLD.apply_projections!(model.state, model.processes)
+    state_before = deepcopy(model.state)
+
+    # reset to (different) random field, representing an update in the form
+    # ui = ui_before + dt rhs_i or any linear combination of such updates
+    BLD.initialize!(model, vel1 = vel0, vel2 = vel0, vel3 = vel0)
+    @assert state_before.vel1 != model.state.vel1 # sanity check
+
+    # compute contribution of pressure solver dt dp/dxi as the difference
+    # of the state before and after the pressure projection
+    rates = deepcopy(model.state) # initialize
+    BLD.apply_projections!(model.state, model.processes)
+    for vel in keys(rates)
+        rates[vel] .-= model.state[vel]
+    end
+
+    # compute energy contribution in physical domain
+    pd = BLD.PhysicalSpace.pdsize(model.grid, nothing)
+    tf = model.physical_spaces[pd].transform
+    get(fd) = BLD.PhysicalSpace.get_field(tf, fd)
+    e1 = sum(get(state_before.vel1) .* get(rates.vel1), dims=(1,2))[:]
+    e2 = sum(get(state_before.vel2) .* get(rates.vel2), dims=(1,2))[:]
+    e3 = sum(get(state_before.vel3) .* get(rates.vel3), dims=(1,2))[:]
+    wc, wi = map((:C, :I)) do ns
+      1 ./ BLD.Derivatives.dx3factors(model.domain, model.grid, NS(ns))
+    end
+    global_sum(wc .* e1) + global_sum(wc .* e2) + global_sum(wi .* e3)
+end
+
+function test_pressure_energy()
+    # have at least one layer per process
+    n = MPI.Initialized() ? max(MPI.Comm_size(MPI.COMM_WORLD), 8) : 8
+
+    Random.seed!(871286) # seed RNG for deterministic results
+
+    # check that total kinetic energy is conserved, with & without grid stretching
+    @test ke_pressure(n, SmoothWall()) + 1 ≈ 1
+    @test ke_pressure(n, FreeSlipBoundary()) + 1 ≈ 1
+    @test ke_pressure(n, SmoothWall(), 0.97) + 1 ≈ 1
+    @test ke_pressure(n, FreeSlipBoundary(), 0.97) + 1 ≈ 1
+end
+
 @timeit "Pressure" @testset "Pressure Solver" begin
     test_batch_ldlt(16)
     test_pressure_solver(16)
+    test_pressure_energy()
     MPI.Initialized() && test_batch_ldlt(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
     MPI.Initialized() && test_pressure_solver(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end

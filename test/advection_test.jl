@@ -241,8 +241,48 @@ function test_advection_convergence(Nz_min)
     Nh, Nv, ε1, ε2, ε3
 end
 
+function ke_advection(n, bc; dealiasing = :quadratic, η = nothing)
+    # set up random velocity field
+    mapping = isnothing(η) ? () : (SinusoidalMapping(η, :symmetric),)
+    domain = Domain((1, 1, 1), bc, bc, mapping...)
+    model = Model((n, n, n), domain, [MomentumAdvection(dealiasing=dealiasing)])
+    vel0(x, y, z) = rand()
+    initialize!(model, vel1 = vel0, vel2 = vel0, vel3 = vel0)
+
+    # compute advection term
+    rates = deepcopy(model.state)
+    BLD.compute_rates!(rates, model.state, 0.0, model.processes, model.physical_spaces)
+
+    # compute energy contribution in physical domain
+    pd = BLD.PhysicalSpace.pdsize(model.grid, nothing)
+    tf = model.physical_spaces[pd].transform
+    get(fd) = BLD.PhysicalSpace.get_field(tf, fd)
+    e1 = sum(get(model.state[:vel1]) .* get(rates[:vel1]), dims=(1,2))[:]
+    e2 = sum(get(model.state[:vel2]) .* get(rates[:vel2]), dims=(1,2))[:]
+    e3 = sum(get(model.state[:vel3]) .* get(rates[:vel3]), dims=(1,2))[:]
+    wc, wi = map((:C, :I)) do ns
+      1 ./ BLD.Derivatives.dx3factors(model.domain, model.grid, NS(ns))
+    end
+    global_sum(wc .* e1) + global_sum(wc .* e2) + global_sum(wi .* e3)
+end
+
+function test_advection_energy()
+    # have at least one layer per process
+    n = MPI.Initialized() ? max(MPI.Comm_size(MPI.COMM_WORLD), 8) : 8
+
+    Random.seed!(75486) # seed RNG for deterministic results
+
+    # check that total kinetic energy is conserved, but only without grid stretching
+    @test ke_advection(n, SmoothWall()) + 1 ≈ 1
+    @test ke_advection(n, FreeSlipBoundary()) + 1 ≈ 1
+    @test ke_advection(n, SmoothWall(); dealiasing = nothing) + 1 ≈ 1
+    @test ke_advection(n, FreeSlipBoundary(); dealiasing = nothing) + 1 ≈ 1
+    @test abs(ke_advection(n, SmoothWall(), η=0.97)) > 1e-10
+end
+
 @timeit "Advection" @testset "Momentum Advection" begin
     test_advection_exact(16)
+    test_advection_energy()
 
     # also test the parallel version with one layer per process
     MPI.Initialized() && test_advection_exact(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
