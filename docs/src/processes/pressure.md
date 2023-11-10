@@ -11,37 +11,43 @@ The pressure solver enforces the continuity equation by subtracting the gradient
 \frac{∂u_i}{∂x_i} = 0
 ```
 
-with the additional constraint that ``\int\int ϕ(x₁, x₂, x₃(0)) \, \mathrm{d}x₁ \mathrm{d}x₂ = 0`` to fix the absolute value of ``ϕ``.
+with the additional constraint that ``\int\int ϕ(x₁, x₂, x₃(0)) \, \mathrm{d}x₁ \mathrm{d}x₂ = 0`` to pin the magnitude of ``ϕ`` to an arbitrary value.
+The process is implemented as a [Projection](@ref Projections).
+
+```@docs
+Pressure
+```
+
+
+## Discretization
 
 After discretization, the computation becomes
 
 ```math
 \begin{aligned}
-f_i(\hat{u}_1^{κ₁κ₂ζ_C}) &= - ∂₁(κ₁) \, \hat{ϕ}^{κ₁κ₂ζ_C}
+f_i(\hat{u}₁^{κ₁κ₂ζ_C}) &= - ∂₁(κ₁) \, \hat{ϕ}^{κ₁κ₂ζ_C}
 \\
-f_i(\hat{u}_2^{κ₁κ₂ζ_C}) &= - ∂₂(κ₂) \, \hat{ϕ}^{κ₁κ₂ζ_C}
+f_i(\hat{u}₂^{κ₁κ₂ζ_C}) &= - ∂₂(κ₂) \, \hat{ϕ}^{κ₁κ₂ζ_C}
 \\
-f_i(\hat{u}_3^{κ₁κ₂ζ_I}) &= - ∂₃(ζ_I) \left(\hat{ϕ}^{κ₁κ₂ζ_I^+} - \hat{ϕ}^{κ₁κ₂ζ_I^−}\right)
+f_i(\hat{u}₃^{κ₁κ₂ζ_I}) &= - ∂₃(ζ_I) \left(\hat{ϕ}^{κ₁κ₂ζ_I^+} - \hat{ϕ}^{κ₁κ₂ζ_I^−}\right)
 \end{aligned}
 ```
 
 such that
 
 ```math
-∂₁(κ₁) \, \hat{u}_1^{κ₁κ₂ζ_C} +
-∂₁(κ₁) \, \hat{u}_2^{κ₁κ₂ζ_C} +
+∂₁(κ₁) \, \hat{u}₁^{κ₁κ₂ζ_C} +
+∂₂(κ₂) \, \hat{u}₂^{κ₁κ₂ζ_C} +
 ∂₃(ζ_C) \left( \hat{u}₃^{κ₁κ₂ζ_C^+} - \hat{u}₃^{κ₁κ₂ζ_C^−} \right)
 = 0
 ```
 
 with the constraint that ``\hat{ϕ}⁰⁰⁰=0``.
+These equations make up the linear operators ``F_i`` and ``C_i`` of the [Projection](@ref Projections) while ``\bm{c}_i`` can have non-zero entries from the boundary conditions of ``\bm{\hat{u}}₃``
 
-The process is implemented as a [Projection](@ref Projections).
-It relies on boundary conditions for ``u₃``.
-
-```@docs
-Pressure
-```
+Since both the gradient and the divergence are linear processes, there is no coupling between different wavenumber pairs ``(κ₁,κ₂)`` in the ``(C_i F_i)`` operator and each pair forms an independent symmetric tridiagonal system of size ``N₃×N₃``.
+These are solved with the Thomas algorithm (see [Quarteroni, Sacco & Saleri, 2007](https://doi.org/10.1007/b98885)).
+As each solution requires communication between all processes, the wavenumber pairs are handled in batches of configurable size, where larger batches reduce the overhead but decrease the parallelism.
 
 
 ## Contributions to Budget Equations
