@@ -66,7 +66,7 @@ SinusoidalMapping
 ```
 
 
-## Discretization
+## [Discretization](@id model-discretization)
 
 Within a semiperiodic [`Domain`](@ref), a quantity ``q`` can be represented as the Fourier series
 
@@ -114,7 +114,7 @@ The elements of ``\bm{\hat{q}}`` are complex numbers but since ``q`` is real-val
 
 ## Physical Processes
 
-The [`Model`](@ref) represents the dynamics of a number of quantities ``q_i`` that are each represented by a vector ``\bm{\hat{q}}_i`` as described in [Discretization](@ref).
+The [`Model`](@ref) represents the dynamics of a number of quantities ``q_i`` that are each represented by a vector ``\bm{\hat{q}}_i`` as described in [Discretization](@ref model-discretization).
 Together they make up the state $\bm{\hat{s}} = \begin{pmatrix} \bm{\hat{q}₁}, \bm{\hat{q}₂}, … \end{pmatrix}^\intercal$. The state usually consists of the three components of the velocity field plus perhaps a number of scalar fields.
 
 The evolution of this state is governed by an equation in the form of
@@ -149,7 +149,7 @@ By convention, the names used for the velocity components are `:vel1`, `:vel2`, 
 
 In principle, each process is free to define its own way of handling spatial
 derivatives, as long as they can be applied to the [discretized form](@ref
-Discretization) of the state.
+model-discretization) of the state.
 However, the [available processes](@ref Available-Processes) all rely on exact
 frequency-domain derivatives along the ``x₁``- and ``x₂``-directions and
 second-order finite differences along the ``x₃``-direction.

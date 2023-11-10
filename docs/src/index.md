@@ -21,7 +21,7 @@ Running simulation consists of setting up a **[`Model`](@ref)** and then simulat
 
 The **[Setup & Workflow](@ref)** page gives practical advice on setting up a project with BoundaryLayerDynamics.jl and running simulations both on personal machines and high-performance computing systems.
 
-The **[Computational Model](@ref)** page explains how to set up a [`Model`](@ref) by configuring the desired [computational domain](@ref Domain), resolution of the [discretization](@ref Discretization), and [physical processes](@ref Physical-Processes).
+The **[Computational Model](@ref)** page explains how to set up a [`Model`](@ref) by configuring the desired [computational domain](@ref Domain), resolution of the [discretization](@ref model-discretization), and [physical processes](@ref Physical-Processes).
 It also documents the mathematical concepts that the computational model is based on.
 
 The **[Evolution in Time](@ref)** page explains how to run a simulation using [`evolve!`](@ref), after configuring the [time-integration method](@ref Time-Integration-Methods) and the [output modules](@ref Output-Modules).

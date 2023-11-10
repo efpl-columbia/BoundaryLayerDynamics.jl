@@ -31,6 +31,8 @@ makedocs(sitename = "BoundaryLayerDynamics.jl",
                   "wall-models.md",
                  ],
          modules = [BoundaryLayerDynamics],
+         repo = Remotes.GitHub("efpl-columbia", "BoundaryLayerDynamics.jl"),
+         checkdocs = :none, # consider using :exports instead
          format = Documenter.HTML(edit_link = nothing,
                                   prettyurls = get(ENV, "PRETTY_URLS", "") == "true",
                                   sidebar_sitename = false),
