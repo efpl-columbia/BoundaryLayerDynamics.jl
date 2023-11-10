@@ -26,6 +26,7 @@ struct StaggeredFourierGrid{C} <: DistributedGrid{C}
         # determine local range of vertical indices
         comm, proc_id, proc_count = init_processes(comm)
         n3 >= proc_count || error("There should not be more processes than vertical layers")
+        n3 >= 3 || error("Due to boundary stencils, the grid needs at least 3 vertical layers")
         i3min, i3max = extrema(i3range(proc_id, proc_count, n3))
         n3c = i3max - i3min + 1
         n3i = (proc_id == proc_count ? n3c - 1 : n3c)
