@@ -68,6 +68,8 @@ function test_open_channel_les(n)
     evolve!(model, dt * nt, dt = dt)
 end
 
-test_closed_channel_les(16)
-MPI.Initialized() && test_closed_channel_les(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
-test_open_channel_les(16)
+@timeit "LES" @testset "Large-Eddy Simulation" begin
+    test_closed_channel_les(16)
+    MPI.Initialized() && test_closed_channel_les(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    test_open_channel_les(16)
+end
