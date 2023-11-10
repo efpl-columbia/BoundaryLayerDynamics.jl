@@ -12,7 +12,7 @@ element type of the vectors x and b.
 
 Since the algorithm for solving the linear system is sequential by nature, there
 is a tradeoff between solving many systems at once, maximizing the throughput of
-each indvidual solution, and solving smaller batches of systems, minimizing the
+each individual solution, and solving smaller batches of systems, minimizing the
 time MPI processes have to wait for each other. This tradeoff is represented by
 the value of `B`, which is the number of systems solved in batch at a time.
 Ideally the optimal value should be found automatically by measuring the
@@ -27,7 +27,7 @@ have a different element type than the matrices.
 
 Internally, we store a set of vectors γ and another set of vectors β,
 representing the L and D matrices of the L·D·Lᵀ decomposition. D is the diagonal
-matrix with γ as its diagnoal vector while L is the matrix with γ¯¹ as the
+matrix with γ as its diagonal vector while L is the matrix with γ¯¹ as the
 diagonal and β as the lower off-diagonal. Another vector is allocated as buffer
 for the values exchanged between MPI processes when solving the system A·x=b.
 
