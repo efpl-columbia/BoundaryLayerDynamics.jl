@@ -1,5 +1,6 @@
 documenter_version := "1.1.2"
 liveserver_version := "1.2.7"
+formatter_version := "1.0.42"
 
 _default:
   @just --list
@@ -34,3 +35,12 @@ servedocs:
   Pkg.add(Pkg.PackageSpec(name="LiveServer", version="{{liveserver_version}}"))
   import LiveServer
   LiveServer.servedocs()
+
+# Apply formatting to code
+format:
+  #!/usr/bin/env julia
+  import Pkg
+  Pkg.activate(; temp=true)
+  Pkg.add(Pkg.PackageSpec(name="JuliaFormatter", version="{{formatter_version}}"))
+  import JuliaFormatter
+  JuliaFormatter.format(["src", "test"])
