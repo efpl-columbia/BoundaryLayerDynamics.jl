@@ -61,11 +61,8 @@ function run_mpi_test(file, nprocs::Integer, subset = [])
     juliabin = joinpath(Sys.BINDIR, Base.julia_exename())
     project = Base.active_project()
     path = joinpath(dirname(@__FILE__), file)
-    pass = true
     try
-        MPI.mpiexec() do cmd
-            run(`$cmd -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $subset`)
-        end
+        run(`$(MPI.mpiexec()) -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $subset`)
     catch
         st = stacktrace()[2:end]
         showerror(stderr, MPITestSetException(nprocs,
