@@ -1,24 +1,16 @@
 module ODEProblems
 
-    const oscillation = (
-        rate! = (du, u, t) -> du .= 1im .* u,
-        T = (0.0, 2π),
-        uref = t -> [exp(1im*t)],
-    )
+const oscillation = (rate! = (du, u, t) -> du .= 1im .* u, T = (0.0, 2π), uref = t -> [exp(1im * t)])
 
-    const timedependent = (
-        rate! = (du, u, t) -> du .= sin(t),
-        T = (0.0, 1.0),
-        uref = t -> [2 - cos(t)],
-    )
+const timedependent = (rate! = (du, u, t) -> du .= sin(t), T = (0.0, 1.0), uref = t -> [2 - cos(t)])
 
-    const lane_emden5 = (
-        rate! = (du, u, t) -> du .= [u[2], -2 / t * u[2] - u[1]^5],
-        T = (eps(), 1.0),
-        uref = t -> [1 / sqrt(1 + t^2 / 3), - sqrt(3) * t * (t^2 + 3)^(-3/2)],
-    )
+const lane_emden5 = (
+    rate! = (du, u, t) -> du .= [u[2], -2 / t * u[2] - u[1]^5],
+    T = (eps(), 1.0),
+    uref = t -> [1 / sqrt(1 + t^2 / 3), -sqrt(3) * t * (t^2 + 3)^(-3 / 2)],
+)
 
-    const all = (oscillation, timedependent, lane_emden5)
+const all = (oscillation, timedependent, lane_emden5)
 end
 
 function test_constant_growth(alg)
@@ -44,13 +36,13 @@ function test_projection(alg)
     u0 = [0.0im]
     t = (0.0, 1.0)
     prob = BLD.ODEProblem(rate!, projection!, u0, t)
-    dt = 1/8
+    dt = 1 / 8
     BLD.solve!(prob, alg(), dt)
     @test BLD.state(prob) ≈ [1.0]
 end
 
 function ode_error(ode, alg, nt)
-    dt = ode.T[end]/nt
+    dt = ode.T[end] / nt
     u0 = ode.uref(ode.T[1])
     prob = BLD.ODEProblem(ode.rate!, u0, ode.T)
     BLD.solve!(prob, alg(), dt)
@@ -60,8 +52,8 @@ end
 function test_ode_convergence(alg, order)
     N = [8, 16, 32, 64, 128]
     for ode in ODEProblems.all
-        ε = [ode_error(ode, alg, nt) for nt=N]
-        test_convergence(N, ε; order=order)
+        ε = [ode_error(ode, alg, nt) for nt in N]
+        test_convergence(N, ε; order = order)
     end
 end
 
@@ -76,11 +68,11 @@ function test_checkpoints(alg)
         empty!(times)
         prob = BLD.ODEProblem(rate!, zeros(1), t)
         if checkpoints == nothing
-            BLD.solve!(prob, alg(), dt, checkpoints = checkpoints)
+            BLD.solve!(prob, alg(), dt; checkpoints = checkpoints)
             @test BLD.state(prob) ≈ ones(1)
             @test times == []
         elseif maximum(checkpoints) <= t[end]
-            BLD.solve!(prob, alg(), dt, checkpoints = checkpoints)
+            BLD.solve!(prob, alg(), dt; checkpoints = checkpoints)
             @test BLD.state(prob) ≈ ones(1)
             @test times ≈ collect(checkpoints)
         else
@@ -97,7 +89,7 @@ function test_rounding(T)
         times = []
         rate!(du, u, t; checkpoint = false) = (checkpoint && push!(times, t); du .= 1)
         p = BLD.ODEProblem(rate!, zeros(T, 1), (zero(t), t))
-        BLD.solve!(p, SSPRK33(), dt, checkpoints=range(dt, t, nt))
+        BLD.solve!(p, SSPRK33(), dt; checkpoints = range(dt, t, nt))
         @test BLD.state(p) ≈ ones(T, 1)
         @test times ≈ T[1//3, 2//3, 3//3]
     end

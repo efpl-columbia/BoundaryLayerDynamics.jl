@@ -2,15 +2,13 @@ module BoundaryLayerDynamics
 __precompile__(false)
 
 # detail-oriented interface
-export Model, closedchannelflow, openchannelflow, incompressible_flow,
-    initialize!, reset!, evolve!, coordinates
+export Model, closedchannelflow, openchannelflow, incompressible_flow, initialize!, reset!, evolve!, coordinates
 
 # domain and boundary conditions
 export Domain, SmoothWall, RoughWall, FreeSlipBoundary, CustomBoundary, SinusoidalMapping
 
 # physical processes
-export MolecularDiffusion, MomentumAdvection, Pressure, ConstantSource, ConstantMean,
-    StaticSmagorinskyModel
+export MolecularDiffusion, MomentumAdvection, Pressure, ConstantSource, ConstantMean, StaticSmagorinskyModel
 
 # ODE methods
 export Euler, AB2, SSPRK22, SSPRK33
@@ -37,8 +35,7 @@ using .Processes
 using .Domains
 using .State: State, init_state
 using .ODEMethods
-using .Logging: Logging, MeanProfiles, ProgressMonitor, Snapshots, StepTimer,
-    Log, flush!
+using .Logging: Logging, MeanProfiles, ProgressMonitor, Snapshots, StepTimer, Log, flush!
 
 using MPI: Initialized as mpi_initialized, COMM_WORLD as MPI_COMM_WORLD
 using TimerOutputs: @timeit
@@ -73,19 +70,23 @@ variables are automatically determined from the specified processes.
   communicator is poorly tested currently and may lead to unexpected behavior.
 """
 struct Model{T,P}
-    domain
-    grid
-    state
+    domain::Any
+    grid::Any
+    state::Any
     processes::P
-    physical_spaces
+    physical_spaces::Any
 
-    function Model(resolution::NTuple{3,Integer}, domain::Domain{T}, processes;
-            comm = mpi_initialized() ? MPI_COMM_WORLD : nothing) where T
-        grid = Grid(resolution, comm = comm)
+    function Model(
+        resolution::NTuple{3,Integer},
+        domain::Domain{T},
+        processes;
+        comm = mpi_initialized() ? MPI_COMM_WORLD : nothing,
+    ) where {T}
+        grid = Grid(resolution; comm = comm)
         processes = foldl(processes; init = []) do acc, p
             # the list of processes is allowed to contain lists/tuples/generators
             # so we wrap “naked” processes so they are also in the form of an iterable
-            p = p isa Union{Tuple,Array,Base.Generator} ? p : (p, )
+            p = p isa Union{Tuple,Array,Base.Generator} ? p : (p,)
             append!(acc, init_process(p, domain, grid) for p in p)
         end
         state = init_state(T, grid, state_fields(processes))
@@ -93,7 +94,6 @@ struct Model{T,P}
 
         new{T,typeof(processes)}(domain, grid, state, processes, physical_spaces)
     end
-
 end
 
 function Base.show(io::IO, ::MIME"text/plain", model::Model)
@@ -113,21 +113,19 @@ Base.getindex(model::Model, field::Symbol) =
     State.getterm(model.state, field, model.domain, model.grid, model.physical_spaces)
 coordinates(model::Model, opts...) = State.coordinates(model.domain, model.grid, opts...)
 
-function momentum_source(; constant_flux = nothing,
-        constant_forcing = isnothing(constant_flux) ? 1 : nothing)
-    isnothing(constant_flux) || isnothing(constant_forcing) ||
+function momentum_source(; constant_flux = nothing, constant_forcing = isnothing(constant_flux) ? 1 : nothing)
+    isnothing(constant_flux) ||
+        isnothing(constant_forcing) ||
         error("Momentum source set up for both constant forcing and constant flux")
     vel = (:vel1, :vel2)
-    isnothing(constant_forcing) ||
-        return (ConstantSource(vel[i], f) for (i, f) in enumerate(constant_forcing))
-    isnothing(constant_flux) ||
-        return (ConstantMean(vel[i], mean) for (i, mean) in enumerate(constant_flux))
+    isnothing(constant_forcing) || return (ConstantSource(vel[i], f) for (i, f) in enumerate(constant_forcing))
+    isnothing(constant_flux) || return (ConstantMean(vel[i], mean) for (i, mean) in enumerate(constant_flux))
     error("No momentum source defined")
 end
 
 incompressible_flow(viscosity; sgs_model = nothing, kwargs...) = [
     MomentumAdvection(),
-    (MolecularDiffusion(vel, viscosity) for vel = (:vel1, :vel2, :vel3))...,
+    (MolecularDiffusion(vel, viscosity) for vel in (:vel1, :vel2, :vel3))...,
     Pressure(),
     momentum_source(; kwargs...)...,
     (isnothing(sgs_model) ? () : (sgs_model,))...,
@@ -135,28 +133,29 @@ incompressible_flow(viscosity; sgs_model = nothing, kwargs...) = [
 
 function closedchannelflow(Re, dims; kwargs...)
     domain = Domain((4π, 2π, 2), SmoothWall(), SmoothWall())
-    processes = incompressible_flow(1/Re; kwargs...)
+    processes = incompressible_flow(1 / Re; kwargs...)
     Model(dims, domain, processes)
 end
 
 function openchannelflow(Re, dims; roughness_length = nothing, kwargs...)
     wall = isnothing(roughness_length) ? SmoothWall() : RoughWall(roughness_length)
     domain = Domain((4π, 2π, 1), wall, FreeSlipBoundary())
-    processes = incompressible_flow(1/Re; kwargs...)
+    processes = incompressible_flow(1 / Re; kwargs...)
     Model(dims, domain, processes)
 end
 
 # generate a function that performs the update of the rate
 # based on the current state
-rate!(model::Model, log = nothing) = (r, s, t; checkpoint = false) -> begin
-    fields = keys(model.state)
-    rates = NamedTuple{fields}(r.x)
-    state = NamedTuple{fields}(s.x)
-    compute_rates!(rates, state, t, model.processes, model.physical_spaces, log, sample = checkpoint)
-    for (k, rate) in pairs(rates)
-        all(isfinite(val) for val in rate) || error("The simulation has diverged.")
+rate!(model::Model, log = nothing) =
+    (r, s, t; checkpoint = false) -> begin
+        fields = keys(model.state)
+        rates = NamedTuple{fields}(r.x)
+        state = NamedTuple{fields}(s.x)
+        compute_rates!(rates, state, t, model.processes, model.physical_spaces, log; sample = checkpoint)
+        for (k, rate) in pairs(rates)
+            all(isfinite(val) for val in rate) || error("The simulation has diverged.")
+        end
     end
-end
 
 # generate a function that performs the projection step of the current state
 projection!(model::Model, log = nothing) = (s) -> begin
@@ -188,9 +187,7 @@ the way.
 - `output = []`: A list of [output modules](@ref Output-Modules) that
   collect data during the simulation.
 """
-function evolve!(model::Model{T}, tspan;
-        dt = nothing, method = SSPRK33(), output = (),
-        verbose = false) where T
+function evolve!(model::Model{T}, tspan; dt = nothing, method = SSPRK33(), output = (), verbose = false) where {T}
 
     # validate/normalize time arguments
     isnothing(dt) && ArgumentError("The keyword argument `dt` is mandatory")
@@ -199,13 +196,12 @@ function evolve!(model::Model{T}, tspan;
     t1, t2, dt = convert.(T, (t1, t2, dt))
 
     # set up logging
-    log = Log(output, model.domain, model.grid, (t1, t2), dt = dt, verbose = verbose)
+    log = Log(output, model.domain, model.grid, (t1, t2); dt = dt, verbose = verbose)
 
     # initialize integrator and perform one step to compile functions
     @timeit log.timer "Initialization" begin
         u0 = ArrayPartition(values(model.state)...)
-        prob = ODEProblem(rate!(model, log), projection!(model, log),
-                                      u0, (t1, t2), checkpoint = true)
+        prob = ODEProblem(rate!(model, log), projection!(model, log), u0, (t1, t2); checkpoint = true)
     end
 
     # perform the full integration
@@ -213,8 +209,8 @@ function evolve!(model::Model{T}, tspan;
         # allow skipping integration by setting tspan = 0,
         # e.g. to compute RHS terms only
         if t2 > t1
-            nt = Helpers.approxdiv(t2-t1, dt)
-            solve!(prob, method, dt, checkpoints=range(t1+dt, t2, nt))
+            nt = Helpers.approxdiv(t2 - t1, dt)
+            solve!(prob, method, dt; checkpoints = range(t1 + dt, t2, nt))
         end
     end
 

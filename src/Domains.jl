@@ -31,12 +31,10 @@ struct Domain{T,F1,F2} <: AbstractDomain{T}
     hsize::Tuple{T,T}
     vmap::F1  # ζ ∈ [0,1] → x₃ ∈ physical domain
     Dvmap::F2 # dx₃/dζ
-    lower_boundary
-    upper_boundary
+    lower_boundary::Any
+    upper_boundary::Any
 
-    function Domain(::Type{T}, dims::Tuple,
-            lower_boundary, upper_boundary, mapping = nothing) where T
-
+    function Domain(::Type{T}, dims::Tuple, lower_boundary, upper_boundary, mapping = nothing) where {T}
         l1, l2 = convert.(T, dims[1:2])
         # l3 could be omitted, one value, or two values
         l3 = length(dims) == 2 ? one(T) : convert.(T, dims[3])
@@ -48,9 +46,9 @@ struct Domain{T,F1,F2} <: AbstractDomain{T}
     end
 end
 
-Base.size(domain::Domain) = Tuple(size(domain, i) for i=1:3)
-Base.size(domain::Domain{T}, dim) where T = begin
-    dim in (1,2) && return domain.hsize[dim]
+Base.size(domain::Domain) = Tuple(size(domain, i) for i in 1:3)
+Base.size(domain::Domain{T}, dim) where {T} = begin
+    dim in (1, 2) && return domain.hsize[dim]
     dim == 3 && return convert(T, domain.vmap(one(T)) - domain.vmap(zero(T)))
     error("Invalid dimension `$dim`")
 end
@@ -61,8 +59,8 @@ Base.extrema(domain::Domain) = begin
     x3min, x3max = extrema(domain, 3)
     ((x1min, x2min, x3min), (x1max, x2max, x3max))
 end
-Base.extrema(domain::Domain{T}, dim::Int) where T = begin
-    dim in (1,2) && return (zero(T), domain.hsize[dim])
+Base.extrema(domain::Domain{T}, dim::Int) where {T} = begin
+    dim in (1, 2) && return (zero(T), domain.hsize[dim])
     dim == 3 && return convert.(T, domain.vmap.((zero(T), one(T))))
     error("Invalid dimension `$dim`")
 end
@@ -91,13 +89,12 @@ and can be set to `:below`, `:above`, `:symmetric` (both boundaries refined),
 or `:auto` (refined for boundaries that produce a boundary-layer).
 """
 struct SinusoidalMapping
-    parameter
-    variant
-    SinusoidalMapping(η, variant=:auto) = (@assert 0 < η < 1; new(η, variant))
+    parameter::Any
+    variant::Any
+    SinusoidalMapping(η, variant = :auto) = (@assert 0 < η < 1; new(η, variant))
 end
 
-function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T
-
+function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where {T}
     @assert x3min < x3max
     η = convert(T, m.parameter)
     l = x3max - x3min
@@ -117,14 +114,14 @@ function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = not
     end
 
     if variant == :symmetric
-        x3 = ζ -> convert(T, x3min + l/2 * (1 + sin(η*(2*ζ-1)*π/2) / sin(η*π/2)))
-        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(2*ζ-1)*π/2))
+        x3 = ζ -> convert(T, x3min + l / 2 * (1 + sin(η * (2 * ζ - 1) * π / 2) / sin(η * π / 2)))
+        Dx3 = ζ -> convert(T, l * η * π / 2 / sin(η * π / 2) * cos(η * (2 * ζ - 1) * π / 2))
     elseif variant == :below
-        x3 = ζ -> convert(T, x3min + l * (1 + sin(η*(ζ-1)*π/2) / sin(η*π/2)))
-        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(ζ-1)*π/2))
+        x3 = ζ -> convert(T, x3min + l * (1 + sin(η * (ζ - 1) * π / 2) / sin(η * π / 2)))
+        Dx3 = ζ -> convert(T, l * η * π / 2 / sin(η * π / 2) * cos(η * (ζ - 1) * π / 2))
     elseif variant == :above
-        x3 = ζ -> convert(T, x3min + l * (sin(η*(ζ)*π/2) / sin(η*π/2)))
-        Dx3 = ζ -> convert(T, l * η*π/2 / sin(η*π/2) * cos(η*(ζ)*π/2))
+        x3 = ζ -> convert(T, x3min + l * (sin(η * (ζ) * π / 2) / sin(η * π / 2)))
+        Dx3 = ζ -> convert(T, l * η * π / 2 / sin(η * π / 2) * cos(η * (ζ) * π / 2))
     else
         error("Unknown variant of SinusoidalMapping")
     end
@@ -132,25 +129,25 @@ function instantiate(m::SinusoidalMapping, (x3min, x3max)::Tuple{T,T}, bcs = not
     x3, Dx3
 end
 
-instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T =
+instantiate(::Nothing, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where {T} =
     ζ -> x3min + ζ * (x3max - x3min), x -> x3max - x3min
-instantiate(m::Tuple{Function,Function}, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where T = m
+instantiate(m::Tuple{Function,Function}, (x3min, x3max)::Tuple{T,T}, bcs = nothing) where {T} = m
 instantiate(mapping, L3::Real, bcs = nothing) = instantiate(mapping, (zero(L3), L3), bcs)
 
 # get physical coordinates from normalized domain positions ∈ [0,1]
-x1range(domain::Domain{T}, ξ) where T = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
-x2range(domain::Domain{T}, η) where T = (convert(T, domain.hsize[2] * η) for η in η)
-x3range(domain::Domain{T}, ζ) where T = (convert(T, domain.vmap(ζ)) for ζ in ζ)
+x1range(domain::Domain{T}, ξ) where {T} = (convert(T, domain.hsize[1] * ξ) for ξ in ξ)
+x2range(domain::Domain{T}, η) where {T} = (convert(T, domain.hsize[2] * η) for η in η)
+x3range(domain::Domain{T}, ζ) where {T} = (convert(T, domain.vmap(ζ)) for ζ in ζ)
 
 dx1factors(domain, wavenumbers::Tuple) = dx1factors(domain, wavenumbers[1])
-dx1factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π/domain.hsize[1]), (:, 1))
+dx1factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π / domain.hsize[1]), (:, 1))
 dx2factors(domain, wavenumbers::Tuple) = dx2factors(domain, wavenumbers[2])
-dx2factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π/domain.hsize[2]), (1, :))
+dx2factors(domain, wavenumbers) = reshape(1im * wavenumbers * (2π / domain.hsize[2]), (1, :))
 
 # struct holding the information necessary to compute the jacobian of the
 # mapping from the simulation space [0,1]×[0,1]×[0,1] to the physical domain
 #struct DomainJacobian
-    # TODO
+# TODO
 #end
 
 # Base.getindex(j::DomainJacobian, i::Int)
@@ -162,14 +159,14 @@ at most linearly transformed and will return an error otherwise.
 """
 function scalefactor(domain::Domain, dim::Int)
     # TODO: support this for vertical directions if there is no transform in use
-    dim == 1 ? 1/domain.hsize[1] : dim == 2 ? 1/domain.hsize[2] :
-        error("Coordinates along dimension 3 might be transformed")
+    dim == 1 ? 1 / domain.hsize[1] :
+    dim == 2 ? 1 / domain.hsize[2] : error("Coordinates along dimension 3 might be transformed")
 end
 
-function scalefactor(domain::Domain{T}, dim::Int, pos::Rational) where T
+function scalefactor(domain::Domain{T}, dim::Int, pos::Rational) where {T}
     # factors are constant along horizontal dimensions
     dim in (1, 2) && return scalefactor(domain, dim)
-    dim == 3 && return convert(T, 1/domain.Dvmap(pos))
+    dim == 3 && return convert(T, 1 / domain.Dvmap(pos))
     error("Invalid dimension `$pos`")
 end
 
@@ -179,8 +176,7 @@ end
 A wall that is aerodynamically smooth and has no-slip, no-penetration boundary
 conditions for the velocity field.
 """
-struct SmoothWall
-end
+struct SmoothWall end
 
 """
     RoughWall(roughness, [von_karman_constant = 0.4])
@@ -190,8 +186,8 @@ The mean streamwise velocity near the wall can be assumed to follow a
 logarithmic profile with the specified von Kármán constant.
 """
 struct RoughWall
-    roughness
-    von_karman_constant
+    roughness::Any
+    von_karman_constant::Any
     RoughWall(z0, kappa = 0.4) = new(z0, kappa)
 end
 
@@ -201,8 +197,7 @@ end
 A no-penetration boundary with vanishing gradients for tangential velocity
 components.
 """
-struct FreeSlipBoundary
-end
+struct FreeSlipBoundary end
 
 """
     CustomBoundary(; boundary_behaviors...)
@@ -220,7 +215,7 @@ CustomBoundary(vel1 = :dirichlet => 1, vel2 = :dirichlet, vel3 = :neumann)
 ```
 """
 struct CustomBoundary
-    behaviors
+    behaviors::Any
     CustomBoundary(; behaviors...) = new(NamedTuple(behaviors))
 end
 

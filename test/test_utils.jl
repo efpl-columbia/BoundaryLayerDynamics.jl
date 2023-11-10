@@ -8,29 +8,38 @@ function setup_random_fields(T, n1, n2, n3)
     gd, ht, uh, uv
 end
 
-function test_convergence(N, ε; exponential=false, order=nothing,
-        threshold_linearity=0.99, threshold_slope=0.95, verbose=false)
-
+function test_convergence(
+    N,
+    ε;
+    exponential = false,
+    order = nothing,
+    threshold_linearity = 0.99,
+    threshold_slope = 0.95,
+    verbose = false,
+)
     X = exponential ? N : log.(N)
     Y = log.(ε)
 
-    cov(x,y) = (n = length(x); n == length(y) || error("Length does not match");
-            μx = sum(x)/n; μy = sum(y)/n; sum((x.-μx) .* (y.-μy)) ./ (n-1))
+    cov(x, y) = (n = length(x);
+    n == length(y) || error("Length does not match");
+    μx = sum(x) / n;
+    μy = sum(y) / n;
+    sum((x .- μx) .* (y .- μy)) ./ (n - 1))
 
-    varX  = cov(X, X)
-    varY  = cov(Y, Y)
+    varX = cov(X, X)
+    varY = cov(Y, Y)
     covXY = cov(X, Y)
     slope = covXY / varX
-    Rsq   = covXY^2 / (varX * varY)
+    Rsq = covXY^2 / (varX * varY)
 
     @test Rsq > threshold_linearity
 
     if order != nothing
-        @test - slope > order * threshold_slope
+        @test -slope > order * threshold_slope
         verbose && println("Passed with order $(-slope) (R²=$(Rsq))")
     end
 
-    - slope, Rsq
+    -slope, Rsq
 end
 
 # These MPI test tools provide useful functionality to test MPI programs. They
@@ -45,15 +54,14 @@ import Test
 struct MPITestSetException <: Exception
     nprocs::Int
     caller::String
-    MPITestSetException(np, c="") = new(np, c)
+    MPITestSetException(np, c = "") = new(np, c)
 end
 
 function Base.showerror(io::IO, e::MPITestSetException)
-    printstyled(io, "Error During MPI Tests (n=", e.nprocs, ")",
-            bold=true, color=Base.error_color())
+    printstyled(io, "Error During MPI Tests (n=", e.nprocs, ")"; bold = true, color = Base.error_color())
     if length(e.caller) > 0
         print(io, " at ")
-        printstyled(io, e.caller, bold=true)
+        printstyled(io, e.caller; bold = true)
     end
 end
 
@@ -65,8 +73,7 @@ function run_mpi_test(file, nprocs::Integer, subset = [])
         run(`$(MPI.mpiexec()) -n $(nprocs) $(juliabin) --color=yes "--project=$(project)" $(path) --mpi $subset`)
     catch
         st = stacktrace()[2:end]
-        showerror(stderr, MPITestSetException(nprocs,
-                string(st[1].file, ":", st[1].line)), st)
+        showerror(stderr, MPITestSetException(nprocs, string(st[1].file, ":", st[1].line)), st)
         println()
         exit(1)
     end
@@ -76,35 +83,27 @@ end
 # number of MPI ranks, in order to collect test results and avoid printing
 # errors multiple times from different ranks
 
-function printall(vars...)
-    if MPI.Initialized()
-        for i=1:MPI.Comm_size(MPI.COMM_WORLD)
-            i == MPI.Comm_rank(MPI.COMM_WORLD)+1 && println("process ", i, ": ", vars...)
+printall(vars...) = if MPI.Initialized()
+        for i in 1:MPI.Comm_size(MPI.COMM_WORLD)
+            i == MPI.Comm_rank(MPI.COMM_WORLD) + 1 && println("process ", i, ": ", vars...)
             MPI.Barrier(MPI.COMM_WORLD)
         end
     else
         println(vars...)
     end
-end
 
-function show_all(var)
-    for i=1:MPI.Comm_size(MPI.COMM_WORLD)
-        i == MPI.Comm_rank(MPI.COMM_WORLD)+1 && show(var)
+show_all(var) = for i in 1:MPI.Comm_size(MPI.COMM_WORLD)
+        i == MPI.Comm_rank(MPI.COMM_WORLD) + 1 && show(var)
         MPI.Barrier(MPI.COMM_WORLD)
     end
-end
 
 # specifying T avoids accidentially taking the minimum in Fourier space
-global_minimum(val::T) where {T<:Real} =
-        MPI.Initialized() ? MPI.Allreduce(val, MPI.MIN, MPI.COMM_WORLD) : val
-global_minimum(field::Array{T}) where {T<:Real} =
-    global_minimum(mapreduce(abs, min, field))
+global_minimum(val::T) where {T<:Real} = MPI.Initialized() ? MPI.Allreduce(val, MPI.MIN, MPI.COMM_WORLD) : val
+global_minimum(field::Array{T}) where {T<:Real} = global_minimum(mapreduce(abs, min, field))
 
 # specifying T avoids accidentially taking the maximum in Fourier space
-global_maximum(val::T) where {T<:Real} =
-        MPI.Initialized() ? MPI.Allreduce(val, MPI.MAX, MPI.COMM_WORLD) : val
-global_maximum(field::Array{T}) where {T<:Real} =
-    global_maximum(mapreduce(abs, max, field))
+global_maximum(val::T) where {T<:Real} = MPI.Initialized() ? MPI.Allreduce(val, MPI.MAX, MPI.COMM_WORLD) : val
+global_maximum(field::Array{T}) where {T<:Real} = global_maximum(mapreduce(abs, max, field))
 
 global_sum(x) = MPI.Initialized() ? MPI.Allreduce(sum(x), +, MPI.COMM_WORLD) : sum(x)
 
@@ -133,17 +132,14 @@ struct MPITestSet <: Test.AbstractTestSet
     error_ranks::Vector{Int}
     mpi_rank::Integer
     mpi_size::Integer
-    MPITestSet(desc, initialized) = new(desc, [], [], [], MPI.Comm_rank(MPI.COMM_WORLD),
-            MPI.Comm_size(MPI.COMM_WORLD))
+    MPITestSet(desc, initialized) = new(desc, [], [], [], MPI.Comm_rank(MPI.COMM_WORLD), MPI.Comm_size(MPI.COMM_WORLD))
 end
 
 # constructor takes a description string and options keyword arguments
-MPITestSet(desc; kwargs...) = MPI.Initialized() ? MPITestSet(desc, true) :
-        Test.DefaultTestSet(desc; kwargs...)
+MPITestSet(desc; kwargs...) = MPI.Initialized() ? MPITestSet(desc, true) : Test.DefaultTestSet(desc; kwargs...)
 
-list_ranks(r) = length(r) == 1 ?
-        string("rank ", r[1], " only") :
-        string("ranks ", join(r[1:end-1], ", "), " & ", r[end])
+list_ranks(r) =
+    length(r) == 1 ? string("rank ", r[1], " only") : string("ranks ", join(r[1:end-1], ", "), " & ", r[end])
 
 function Test.record(ts::MPITestSet, child::Test.AbstractTestSet)
     push!(ts.fail_ranks, sum(child.fail_ranks .!= 0))
@@ -168,17 +164,19 @@ function Test.record(ts::MPITestSet, t::Test.Result)
         errids = MPI.Allgather(errid, MPI.COMM_WORLD)
         if ts.mpi_rank + 1 == findfirst(!iszero, errids) # only report one error
             fails = findall(errids .== 1) .- 1
-            errs  = findall(errids .== 2) .- 1
+            errs = findall(errids .== 2) .- 1
             print("Rank ", ts.mpi_rank, ": ")
             print(t)
-            summary = string("\n Test",
-                    length(fails) > 0 ? " failed on " * list_ranks(fails) : "",
-                    length(fails) > 0 && length(errs) > 0 ? " and" : "",
-                    length(errs)  > 0 ? " produced errors on " * list_ranks(errs) : "",
-                    "\n")
-            printstyled(summary; color=Base.error_color())
+            summary = string(
+                "\n Test",
+                length(fails) > 0 ? " failed on " * list_ranks(fails) : "",
+                length(fails) > 0 && length(errs) > 0 ? " and" : "",
+                length(errs) > 0 ? " produced errors on " * list_ranks(errs) : "",
+                "\n",
+            )
+            printstyled(summary; color = Base.error_color())
         end
-        push!(ts.fail_ranks,  sum(errids .== 1))
+        push!(ts.fail_ranks, sum(errids .== 1))
         push!(ts.error_ranks, sum(errids .== 2))
         push!(ts.results, t)
     end
@@ -187,7 +185,7 @@ end
 
 function testresults(ts::MPITestSet)
     total, passed = 0, 0
-    for (i,r) in enumerate(ts.results)
+    for (i, r) in enumerate(ts.results)
         if r isa Test.Result
             total += 1
             passed += (ts.fail_ranks[i] == ts.error_ranks[i] == 0 ? 1 : 0)
@@ -203,20 +201,19 @@ end
 function print_test_summary(ts::MPITestSet, prefix = "")
     total, passed = testresults(ts)
     print(ts.description, " (")
-    printstyled("$passed/$total passed", color = (total == passed ? :green : :red))
+    printstyled("$passed/$total passed"; color = (total == passed ? :green : :red))
     println(")")
     total == passed && return
-    for (i,r) in enumerate(ts.results)
+    for (i, r) in enumerate(ts.results)
         if r isa Test.Result
             f = ts.fail_ranks[i]
             e = ts.error_ranks[i]
             if f > 0 || e > 0
-                println(prefix, "– Test ", i, ": ", ts.mpi_size-f-e, " Pass", ", ",
-                        f, " Fail", ", ", e, " Err")
+                println(prefix, "– Test ", i, ": ", ts.mpi_size - f - e, " Pass", ", ", f, " Fail", ", ", e, " Err")
             end
         elseif r isa MPITestSet
             print(prefix, "• ")
-            print_test_summary(r, prefix*"  ")
+            print_test_summary(r, prefix * "  ")
         end
     end
 end
@@ -231,7 +228,7 @@ function Test.finish(ts::MPITestSet)
 
     MPI.Barrier(MPI.COMM_WORLD)
     if ts.mpi_rank == 0
-        printstyled("Test Summary:", bold=true, color=:white)
+        printstyled("Test Summary:"; bold = true, color = :white)
         println(" (", ts.mpi_size, " MPI process$(ts.mpi_size > 1 ? "es" : ""))")
         print_test_summary(ts)
     end

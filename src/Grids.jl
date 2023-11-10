@@ -17,8 +17,7 @@ struct StaggeredFourierGrid{C} <: DistributedGrid{C}
     i3max::Int
     comm::C
 
-    function StaggeredFourierGrid((n1, n2, n3)::Tuple{Int,Int,Int};
-            comm = MPI.Initialized() ? MPI.COMM_WORLD : nothing)
+    function StaggeredFourierGrid((n1, n2, n3)::Tuple{Int,Int,Int}; comm = MPI.Initialized() ? MPI.COMM_WORLD : nothing)
 
         # determine largest wavenumber for horizontal directions
         k1max, k2max = div.((n1, n2) .- 1, 2)
@@ -51,8 +50,7 @@ function proc_for_layer(grid::StaggeredFourierGrid, ind)
     i3 = ind > 0 ? ind : grid.n3global - abs(ind) + 1
     proc_count = MPI.Comm_size(grid.comm)
     for proc_id in 1:proc_count
-        i3 in i3range(proc_id, proc_count, grid.n3global) &&
-            return MPI.Cart_rank(grid.comm, proc_id-1)
+        i3 in i3range(proc_id, proc_count, grid.n3global) && return MPI.Cart_rank(grid.comm, proc_id - 1)
     end
     error("Layer $i3 does not belong to any process")
 end
@@ -66,18 +64,17 @@ function init_processes(comm)
     comm, coord, count
 end
 
-neighbors(grid::StaggeredFourierGrid, displacement = 1) =
-    neighbors(grid.comm, displacement)
+neighbors(grid::StaggeredFourierGrid, displacement = 1) = neighbors(grid.comm, displacement)
 function neighbors(comm, displacement = 1)
     isnothing(comm) && return (nothing, nothing)
     neighbors = MPI.Cart_shift(comm, 0, displacement)
     Tuple(n == MPI.PROC_NULL ? nothing : n for n in neighbors)
 end
 
-wavenumbers(gd) = wavenumbers.((gd,), (1,2))
+wavenumbers(gd) = wavenumbers.((gd,), (1, 2))
 wavenumbers(gd, dim::Int) = begin
     if dim == 1
-        [0:gd.k1max; ]
+        [0:gd.k1max;]
     elseif dim == 2
         [0:gd.k2max; -gd.k2max:-1]
     else
@@ -86,8 +83,8 @@ wavenumbers(gd, dim::Int) = begin
 end
 
 struct NodeSet{NS}
-    NodeSet(ns::Symbol) = ns in (:C, :I, :Iext) ? new{ns}() :
-        error("Invalid NodeSet: $(ns) (only :C, :I, and :Iext are allowed)")
+    NodeSet(ns::Symbol) =
+        ns in (:C, :I, :Iext) ? new{ns}() : error("Invalid NodeSet: $(ns) (only :C, :I, and :Iext are allowed)")
 end
 
 # convenience functions to get array sizes
@@ -124,24 +121,23 @@ nodes(::Val{:sgs13}) = NodeSet(:I)
 nodes(::Val{:sgs22}) = NodeSet(:C)
 nodes(::Val{:sgs23}) = NodeSet(:I)
 nodes(::Val{:sgs33}) = NodeSet(:C)
-nodes(::Val{F}) where F = error("Nodes of field `$F` are unknown. Define `nodes(::Val{:$F})` to resolve this error.")
+nodes(::Val{F}) where {F} = error("Nodes of field `$F` are unknown. Define `nodes(::Val{:$F})` to resolve this error.")
 
 Base.zeros(T, grid, ::NodeSet{:C}) = zeros(Complex{T}, fdsize(grid)..., grid.n3c)
 Base.zeros(T, grid, ::NodeSet{:I}) = zeros(Complex{T}, fdsize(grid)..., grid.n3i)
 
 # returns a range of rational ζ-values between 0 and 1
-function vrange(gd, ::NodeSet{:C}; neighbors=false)
-    ζ = LinRange(0//1, 1//1, 2*gd.n3global+1) # all ζ-values
-    imin = 2*gd.i3min - (neighbors ? 1 : 0)
-    imax = 2*gd.i3max + (neighbors ? 1 : 0)
+function vrange(gd, ::NodeSet{:C}; neighbors = false)
+    ζ = LinRange(0 // 1, 1 // 1, 2 * gd.n3global + 1) # all ζ-values
+    imin = 2 * gd.i3min - (neighbors ? 1 : 0)
+    imax = 2 * gd.i3max + (neighbors ? 1 : 0)
     ζ[imin:2:imax]
 end
-function vrange(gd, ::NodeSet{:I}; neighbors=false)
-    ζ = LinRange(0//1, 1//1, 2*gd.n3global+1) # all ζ-values
-    imin = 2*gd.i3min+1 - (neighbors ? 1 : 0)
-    imax = 2*(gd.i3min+gd.n3i-1)+1 + (neighbors ? 1 : 0)
+function vrange(gd, ::NodeSet{:I}; neighbors = false)
+    ζ = LinRange(0 // 1, 1 // 1, 2 * gd.n3global + 1) # all ζ-values
+    imin = 2 * gd.i3min + 1 - (neighbors ? 1 : 0)
+    imax = 2 * (gd.i3min + gd.n3i - 1) + 1 + (neighbors ? 1 : 0)
     ζ[imin:2:imax]
 end
-
 
 end

@@ -32,7 +32,9 @@ end
 # run tests for current (single- or multiple-process) run
 parallel && MPI.Init()
 const show_output = parallel ? MPI.Comm_rank(MPI.COMM_WORLD) == 0 : true
-show_output && println("Testing BoundaryLayerDynamics.jl... ($(parallel ? "$(MPI.Comm_size(MPI.COMM_WORLD)) processes" : "single process"))")
+show_output && println(
+    "Testing BoundaryLayerDynamics.jl... ($(parallel ? "$(MPI.Comm_size(MPI.COMM_WORLD)) processes" : "single process"))",
+)
 @timeit "BoundaryLayerDynamics.jl Tests" @testset MPITestSet "Atmospheric Boundary Layer Simulations" begin
     for test in selection
         include("$(test)_test.jl")

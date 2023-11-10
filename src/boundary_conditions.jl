@@ -16,7 +16,7 @@ struct BoundaryCondition{BC,Nb,Na,C,A}
 end
 
 # set up frequency domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid::Grid; kwargs...) where T
+function BoundaryCondition(::Type{T}, type, grid::Grid; kwargs...) where {T}
     type = init_bctype(T, type; kwargs...)
     buffer = zeros(Complex{T}, fdsize(grid))
     pmin = ntuple(i -> proc_for_layer(grid, i), 3)
@@ -25,7 +25,7 @@ function BoundaryCondition(::Type{T}, type, grid::Grid; kwargs...) where T
 end
 
 # set up physical domain boundary condition
-function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing; kwargs...) where T
+function BoundaryCondition(::Type{T}, type, grid::Grid, dealiasing; kwargs...) where {T}
     type = init_bctype(T, type; kwargs...)
     buffer = zeros(T, pdsize(grid, dealiasing))
     pmin = ntuple(i -> proc_for_layer(grid, i), 3)
@@ -50,32 +50,40 @@ struct DynamicValues{T}
 end
 
 # convert boundary conditions into concrete types
-init_bctype(::Type{T}, type::Symbol; kwargs...) where T = init_bctype(T, Val(type), zero(T); kwargs...)
-init_bctype(::Type{T}, type::Pair; kwargs...) where T = init_bctype(T, Val(first(type)), last(type); kwargs...)
-init_bctype(::Type{T}, ::Val{:dirichlet}, value; kwargs...) where T = ConstantValue(convert(T, value))
-init_bctype(::Type{T}, ::Val{:neumann}, gradient; dx3::T) where T = ConstantGradient(convert(T, gradient), convert(T, gradient * dx3))
-init_bctype(::Type{T}, ::Nothing; kwargs...) where T = nothing
-init_bctype(::Type{T}, ::Val{:dynamic}, dims::Tuple{Int,Int}; kwargs...) where T = DynamicValues(zeros(T, dims))
+init_bctype(::Type{T}, type::Symbol; kwargs...) where {T} = init_bctype(T, Val(type), zero(T); kwargs...)
+init_bctype(::Type{T}, type::Pair; kwargs...) where {T} = init_bctype(T, Val(first(type)), last(type); kwargs...)
+init_bctype(::Type{T}, ::Val{:dirichlet}, value; kwargs...) where {T} = ConstantValue(convert(T, value))
+init_bctype(::Type{T}, ::Val{:neumann}, gradient; dx3::T) where {T} =
+    ConstantGradient(convert(T, gradient), convert(T, gradient * dx3))
+init_bctype(::Type{T}, ::Nothing; kwargs...) where {T} = nothing
+init_bctype(::Type{T}, ::Val{:dynamic}, dims::Tuple{Int,Int}; kwargs...) where {T} = DynamicValues(zeros(T, dims))
 
-
-function init_bcs(field, domain::Domain{T}, grid::Grid, opts...) where T
+function init_bcs(field, domain::Domain{T}, grid::Grid, opts...) where {T}
     # options passed on to boundary condition allow for initializing both
     # frequency-space and physical-space boundary conditions
-    lbc = BoundaryCondition(T, bctype(domain.lower_boundary, field), grid, opts...;
-                            dx3 = domain.Dvmap(zero(T)) / grid.n3global)
-    ubc = BoundaryCondition(T, bctype(domain.upper_boundary, field), grid, opts...;
-                            dx3 = domain.Dvmap(one(T)) / grid.n3global)
+    lbc = BoundaryCondition(
+        T,
+        bctype(domain.lower_boundary, field),
+        grid,
+        opts...;
+        dx3 = domain.Dvmap(zero(T)) / grid.n3global,
+    )
+    ubc = BoundaryCondition(
+        T,
+        bctype(domain.upper_boundary, field),
+        grid,
+        opts...;
+        dx3 = domain.Dvmap(one(T)) / grid.n3global,
+    )
     (lbc, ubc)
 end
 
-internal_bc(domain::Domain{T}, grid) where T =
-    BoundaryCondition(T, nothing, grid)
-internal_bc(domain::Domain{T}, grid, dims) where T =
-    BoundaryCondition(T, nothing, grid, dims)
+internal_bc(domain::Domain{T}, grid) where {T} = BoundaryCondition(T, nothing, grid)
+internal_bc(domain::Domain{T}, grid, dims) where {T} = BoundaryCondition(T, nothing, grid, dims)
 
 # create boundary conditions from boundary definitions
 bctype(boundary, field::Symbol) = bctype(boundary, Val(field))
-bctype(boundary::CustomBoundary, ::Val{F}) where F = boundary.behaviors[F]
+bctype(boundary::CustomBoundary, ::Val{F}) where {F} = boundary.behaviors[F]
 bctype(::SmoothWall, ::Val{:vel1}) = :dirichlet
 bctype(::SmoothWall, ::Val{:vel2}) = :dirichlet
 bctype(::SmoothWall, ::Val{:vel3}) = :dirichlet
@@ -89,13 +97,10 @@ bctype(::FreeSlipBoundary, ::Val{:vel3}) = :dirichlet
 const MTAG_UP = 8
 const MTAG_DN = 9
 
-layers(field::AbstractArray{T,3}) where T =
-        Tuple(view(field, :, :, i3) for i3=1:size(field,3))
+layers(field::AbstractArray{T,3}) where {T} = Tuple(view(field, :, :, i3) for i3 in 1:size(field, 3))
 
 # single process
-function layer_below(layers, lower_bc::BoundaryCondition{BC,nothing,nothing}) where {BC}
-    lower_bc.type
-end
+layer_below(layers, lower_bc::BoundaryCondition{BC,nothing,nothing}) where {BC} = lower_bc.type
 
 # lowest process
 function layer_below(layers, lower_bc::BoundaryCondition{BC,nothing,Na}) where {BC,Na}
@@ -111,15 +116,20 @@ end
 
 # inner process
 function layer_below(layers, lower_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
-    MPI.Sendrecv!(layers[end], lower_bc.buffer, lower_bc.comm;
-                  dest=Na, sendtag=MTAG_UP, source=Nb, recvtag=MTAG_UP)
+    MPI.Sendrecv!(
+        layers[end],
+        lower_bc.buffer,
+        lower_bc.comm;
+        dest = Na,
+        sendtag = MTAG_UP,
+        source = Nb,
+        recvtag = MTAG_UP,
+    )
     lower_bc.buffer
 end
 
 # single process
-function layer_above(layers, upper_bc::BoundaryCondition{BC,nothing,nothing}) where {BC}
-    upper_bc.type
-end
+layer_above(layers, upper_bc::BoundaryCondition{BC,nothing,nothing}) where {BC} = upper_bc.type
 
 # lowest process
 function layer_above(layers, upper_bc::BoundaryCondition{BC,nothing,Na}) where {BC,Na}
@@ -141,7 +151,7 @@ function layer_above(layers::Tuple{}, upper_bc::BoundaryCondition{ConstantValue{
         fill!(upper_bc.buffer, upper_bc.type.value)
     else
         fill!(upper_bc.buffer, 0)
-        upper_bc.buffer[1,1] = upper_bc.type.value
+        upper_bc.buffer[1, 1] = upper_bc.type.value
     end
     MPI.Send(upper_bc.buffer, Nb, MTAG_DN, upper_bc.comm)
     nothing # prevent the caller from trying to use the return value
@@ -149,8 +159,15 @@ end
 
 # inner process
 function layer_above(layers, upper_bc::BoundaryCondition{BC,Nb,Na}) where {BC,Nb,Na}
-    MPI.Sendrecv!(layers[1], upper_bc.buffer, upper_bc.comm;
-                  dest=Nb, sendtag=MTAG_DN, source=Na, recvtag=MTAG_DN)
+    MPI.Sendrecv!(
+        layers[1],
+        upper_bc.buffer,
+        upper_bc.comm;
+        dest = Nb,
+        sendtag = MTAG_DN,
+        source = Na,
+        recvtag = MTAG_DN,
+    )
     upper_bc.buffer
 end
 
@@ -177,7 +194,7 @@ adjustments for I-nodes.
   has the same number of extra layers and that they are ordered away from the
   boundary.
 """
-function boundary_layer(layers, ind::Int, bc, extra_layers=())
+function boundary_layer(layers, ind::Int, bc, extra_layers = ())
     lbc = ind > 0 # lower or upper boundary
     ind = abs(ind)
     boundary_procs = lbc ? bc.min_procs : bc.max_procs
@@ -189,11 +206,11 @@ function boundary_layer(layers, ind::Int, bc, extra_layers=())
 
     if ind <= boundary_layers
         # data is already in layers of boundary process
-        proc == dst && return layers[lbc ? ind : end+1-ind]
+        proc == dst && return layers[lbc ? ind : end + 1 - ind]
 
     elseif ind <= boundary_layers + length(extra_layers)
         # data is already in extra layers of boundary process
-        proc == dst && return extra_layers[ind - boundary_layers]
+        proc == dst && return extra_layers[ind-boundary_layers]
 
     else # we need to send the data to the boundary
         if proc == dst
@@ -202,7 +219,7 @@ function boundary_layer(layers, ind::Int, bc, extra_layers=())
         end
         if proc == src
             offset = ind - findfirst(p -> p == proc, boundary_procs)
-            MPI.Send(layers[lbc ? 1+offset : end-offset], dst, MTAG_DN, bc.comm)
+            MPI.Send(layers[lbc ? 1 + offset : end - offset], dst, MTAG_DN, bc.comm)
         end
     end
 end
@@ -224,17 +241,21 @@ This function takes a field defined on I-nodes, converts it into layers, and exp
 them through communication such that the list includes the layers just above and
 below all C-nodes. This means passing data up throughout the domain.
 """
-function layers_i2c(field::AbstractArray{T}, bc_below::BoundaryCondition{BCb,Nb,Na},
-                        bc_above::BoundaryCondition{BCa,Nb,Na}) where {T,BCb,BCa,Nb,Na}
+function layers_i2c(
+    field::AbstractArray{T},
+    bc_below::BoundaryCondition{BCb,Nb,Na},
+    bc_above::BoundaryCondition{BCa,Nb,Na},
+) where {T,BCb,BCa,Nb,Na}
     field = layers(field)
     field_below = layer_below(field, bc_below)
     isnothing(Na) ? (field_below, field..., bc_above.type) : (field_below, field...)
 end
 
-function layers_expand_full(field::AbstractArray,
-        bc_below::BoundaryCondition{BCb,Nb,Na},
-        bc_above::BoundaryCondition{BCa,Nb,Na}) where {BCb,BCa,Nb,Na}
-
+function layers_expand_full(
+    field::AbstractArray,
+    bc_below::BoundaryCondition{BCb,Nb,Na},
+    bc_above::BoundaryCondition{BCa,Nb,Na},
+) where {BCb,BCa,Nb,Na}
     field = layers(field)
     layer_below(field, bc_below), field..., layer_above(field, bc_above)
 end
@@ -252,10 +273,12 @@ function layers_expand_full(field, bc_below, bc_above, ::NodeSet{:I})
     below, field..., above
 end
 
-function layers_expand_full(field::AbstractArray{T},
-        bc_below::BoundaryCondition{BCb,Nb,Na},
-        bc_above::BoundaryCondition{BCa,Nb,Na}, ::NodeSet{:C}) where {T,BCb,BCa,Nb,Na}
-
+function layers_expand_full(
+    field::AbstractArray{T},
+    bc_below::BoundaryCondition{BCb,Nb,Na},
+    bc_above::BoundaryCondition{BCa,Nb,Na},
+    ::NodeSet{:C},
+) where {T,BCb,BCa,Nb,Na}
     field = layers(field)
     below = layer_below(field, bc_below)
     above = layer_above(field, bc_above)
@@ -268,8 +291,8 @@ function layers_expand_full(field::AbstractArray{T},
             l2 = length(field) >= 2 ? field[2] : above
             # extrapolate with fourth-order accuracy
             if T <: Complex
-                @. bc_below.buffer = (- 15 * l1 + 5 * l2 - l3) / 5
-                bc_below.buffer[1,1] += 16 * l0 / 5
+                @. bc_below.buffer = (-15 * l1 + 5 * l2 - l3) / 5
+                bc_below.buffer[1, 1] += 16 * l0 / 5
             else
                 @. bc_below.buffer = (16 * l0 - 15 * l1 + 5 * l2 - l3) / 5
             end
@@ -286,8 +309,8 @@ function layers_expand_full(field::AbstractArray{T},
             l2 = length(field) >= 2 ? field[end-1] : below
             # extrapolate with fourth-order accuracy
             if T <: Complex
-                @. bc_above.buffer = (- 15 * l1 + 5 * l2 - l3) / 5
-                bc_above.buffer[1,1] += 16 * l0 / 5
+                @. bc_above.buffer = (-15 * l1 + 5 * l2 - l3) / 5
+                bc_above.buffer[1, 1] += 16 * l0 / 5
             else
                 @. bc_above.buffer = (16 * l0 - 15 * l1 + 5 * l2 - l3) / 5
             end
@@ -305,7 +328,7 @@ function layers_expand_full(field::AbstractArray{T},
             # extrapolate with fourth-order accuracy
             if T <: Complex
                 @. bc_below.buffer = (21 * l1 + 3 * l2 - l3) / 23
-                bc_below.buffer[1,1] -= 24 * l0 / 23
+                bc_below.buffer[1, 1] -= 24 * l0 / 23
             else
                 @. bc_below.buffer = (-24 * l0 + 21 * l1 + 3 * l2 - l3) / 23
             end
@@ -317,13 +340,13 @@ function layers_expand_full(field::AbstractArray{T},
     if BCa <: ConstantGradient
         l3 = boundary_layer(field, -3, bc_above, (below,)) # all processes participate
         if isnothing(Na) # handle boundary after sending/receiving third layer
-            l0 = - above.difference
+            l0 = -above.difference
             l1 = field[end]
             l2 = length(field) >= 2 ? field[end-1] : below
             # extrapolate with fourth-order accuracy
             if T <: Complex
                 @. bc_above.buffer = (21 * l1 + 3 * l2 - l3) / 23
-                bc_above.buffer[1,1] -= 24 * l0 / 23
+                bc_above.buffer[1, 1] -= 24 * l0 / 23
             else
                 @. bc_above.buffer = (-24 * l0 + 21 * l1 + 3 * l2 - l3) / 23
             end

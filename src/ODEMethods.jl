@@ -113,7 +113,7 @@ function perform_step!(problem, dt, c::AB2Buffer)
 
         # store f(u0, t0) for later and compute f(u1, t1)
         @. c.duprev = problem.du
-        problem.rate!(problem.du, problem.u, problem.t[]+dt)
+        problem.rate!(problem.du, problem.u, problem.t[] + dt)
 
         # compute u2 = u1 + ½ dt (f(u1, t1) - f(u0, t0))
         # (u2 = ½ u0 + ½ u1 + ½ Δt f(u1, t1) reformulated to eliminate u0)
@@ -124,7 +124,7 @@ function perform_step!(problem, dt, c::AB2Buffer)
         # c.duprev contains f(u0, t0), as required for next step
     else
         c.last_dt[] == dt || error("Cannot change time step for multi-step methods")
-        @. problem.u += dt/2 * (3 * problem.du - c.duprev)
+        @. problem.u += dt / 2 * (3 * problem.du - c.duprev)
         problem.projection!(problem.u)
         c.duprev .= problem.du
     end
@@ -174,8 +174,7 @@ struct ODEProblem{Tt,Tu,R,P}
     tmax::Tt
 end
 
-ODEProblem(rate!, u0, tspan; kwargs...) =
-    ODEProblem(rate!, u -> u, u0, tspan; kwargs...)
+ODEProblem(rate!, u0, tspan; kwargs...) = ODEProblem(rate!, u -> u, u0, tspan; kwargs...)
 
 function ODEProblem(rate!, projection!, u0, (t1, t2); checkpoint = false)
     t1 <= t2 || error("Integration start time is larger than end time")
@@ -196,11 +195,7 @@ Step the time integration problem `prob` forward in time with the specified
 algorithm and time step, hitting all the checkpoints exactly during the
 integration and signaling them to the `rate!` function of the problem.
 """
-function solve!(prob::ODEProblem{Tt},
-        alg::ODEMethod,
-        dt::Tt;
-        checkpoints = nothing) where {Tt}
-
+function solve!(prob::ODEProblem{Tt}, alg::ODEMethod, dt::Tt; checkpoints = nothing) where {Tt}
     buffer = init_buffer(prob, alg)
 
     # make sure that checkpoints are valid and in the right format
@@ -219,8 +214,7 @@ function solve!(prob::ODEProblem{Tt},
     prob.u
 end
 
-function step_to!(prob::ODEProblem{Tt}, buffer::ODEBuffer,
-        t::Tt, dt::Tt, checkpoint::Bool) where {Tt}
+function step_to!(prob::ODEProblem{Tt}, buffer::ODEBuffer, t::Tt, dt::Tt, checkpoint::Bool) where {Tt}
     if prob.t[] ≈ t # already there
         checkpoint && prob.t[] != t && error("Could not hit checkpoint t=$t exactly")
         prob.t[] = t # set time to exact value

@@ -8,17 +8,35 @@ abstract type DiscretizedProcess end
 using TimerOutputs: TimerOutputs, @timeit
 using ..Helpers
 using ..Grids: NodeSet, nodes, neighbors, wavenumbers, vrange
-using ..Domains: AbstractDomain as Domain, scalefactor, SmoothWall, RoughWall, FreeSlipBoundary,
-                 x1range, x2range, x3range, dx1factors, dx2factors
-using ..BoundaryConditions: BoundaryCondition, ConstantValue, ConstantGradient, DynamicValues,
-                            init_bcs, internal_bc,
-                            layers, layer_below, layer_above, layers_c2i, layers_i2c, layers_expand_full
+using ..Domains:
+    AbstractDomain as Domain,
+    scalefactor,
+    SmoothWall,
+    RoughWall,
+    FreeSlipBoundary,
+    x1range,
+    x2range,
+    x3range,
+    dx1factors,
+    dx2factors
+using ..BoundaryConditions:
+    BoundaryCondition,
+    ConstantValue,
+    ConstantGradient,
+    DynamicValues,
+    init_bcs,
+    internal_bc,
+    layers,
+    layer_below,
+    layer_above,
+    layers_c2i,
+    layers_i2c,
+    layers_expand_full
 using ..Derivatives: second_derivatives, dx3factors, dx3_c2i!, dx3_i2c!
 using ..PhysicalSpace: physical_domain!, pdsize
 using ..Logging: prepare_samples!, log_sample!, log_state!, process_log!
 
 function compute_rates!(rates, state, t, processes, transforms, log = nothing; sample = !isnothing(log))
-
     timer = isnothing(log) ? TimerOutputs.get_defaulttimer() : log.timer
     log = sample ? log : nothing
 
@@ -47,7 +65,6 @@ end
 add_rates!(rate, process, state, t) = add_rates!(rate, process, state, t, nothing)
 
 function apply_projections!(state, processes, log = nothing)
-
     timer = isnothing(log) ? TimerOutputs.get_defaulttimer() : log.timer
 
     # TODO: allow logging data from projection step
@@ -64,8 +81,7 @@ function state_fields(processes)
     end
 
     # underlines are used to specify derivatives elsewhere in the code
-    any('_' in string(f) for f in fields) &&
-        error("The names of state fields are not allowed to contain underlines.")
+    any('_' in string(f) for f in fields) && error("The names of state fields are not allowed to contain underlines.")
 
     unique!(fields)
 end

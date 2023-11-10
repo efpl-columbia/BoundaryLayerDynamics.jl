@@ -12,15 +12,17 @@ using ..PhysicalSpace: Transform2D, get_field, default_size, h1range, h2range
 using ..BoundaryConditions: ConstantValue, DynamicValues
 
 struct Log
-    timer
-    output
-    comm
-    verbose
+    timer::Any
+    output::Any
+    comm::Any
+    verbose::Any
     function Log(output, domain, grid, tspan; dt = nothing, verbose = false)
         timer = TimerOutput()
         # add progress monitor and wrap output in array if necessary
-        output = [(verbose ? (ProgressMonitor(tstep = dt),) : ())...,
-                  (output isa Union{Tuple,AbstractArray} ? output : (output,))...]
+        output = [
+            (verbose ? (ProgressMonitor(; tstep = dt),) : ())...,
+            (output isa Union{Tuple,AbstractArray} ? output : (output,))...,
+        ]
         # initialize all outputs
         output = map(output) do o
             if o isa NamedTuple
@@ -34,11 +36,9 @@ struct Log
     end
 end
 
-function reset!(log::Log, t)
-    @timeit log.timer "Output" for output in log.output
+reset!(log::Log, t) = @timeit log.timer "Output" for output in log.output
         reset!(output, t)
     end
-end
 # default for output types and for log=nothing
 reset!(opts...) = nothing
 
@@ -54,39 +54,29 @@ end
 # default for output types and for log=nothing
 flush!(opts...) = nothing
 
-function process_log!(log::Log, rates, t)
-    @timeit log.timer "Output" for output in log.output
+process_log!(log::Log, rates, t) = @timeit log.timer "Output" for output in log.output
         process_log!(output, rates, t)
     end
-end
 # default for output types and for log=nothing
 process_log!(opts...) = nothing
 
-function log_sample!(log::Log, sample, t; kwargs...)
-    @timeit log.timer "Output" for output in log.output
+log_sample!(log::Log, sample, t; kwargs...) = @timeit log.timer "Output" for output in log.output
         log_sample!(output, sample, t; kwargs...)
     end
-end
 # default for output types and for log=nothing
 log_sample!(opts...; kwargs...) = nothing
 
-function log_state!(log::Log, state, t)
-    @timeit log.timer "Output" for output in log.output
+log_state!(log::Log, state, t) = @timeit log.timer "Output" for output in log.output
         log_state!(output, state, t)
     end
-end
 # default for output types and for log=nothing
 log_state!(opts...) = nothing
 
-function prepare_samples!(log::Log, t)
-    @timeit log.timer "Output" for output in log.output
+prepare_samples!(log::Log, t) = @timeit log.timer "Output" for output in log.output
         prepare_samples!(output, t)
     end
-end
 # default for output types and for log=nothing
 prepare_samples!(opts...) = nothing
-
-
 
 """
     StepTimer(; kwargs...)
@@ -109,14 +99,13 @@ struct StepTimer
     timestamps_simulation::Vector{Float64}
     write::Bool
 
-    function StepTimer(domain, grid, tspan; init_time = time(),
-            path = "output/timestamps.json", frequency = 1)
+    function StepTimer(domain, grid, tspan; init_time = time(), path = "output/timestamps.json", frequency = 1)
         write = isnothing(grid.comm) || MPI.Comm_rank(grid.comm) == 0
         new(path, frequency, Ref(-1), init_time, zeros(0), zeros(0), write)
     end
 end
 
-StepTimer(; kwargs...) = (output=StepTimer, init_time=time(), kwargs...)
+StepTimer(; kwargs...) = (output = StepTimer, init_time = time(), kwargs...)
 
 function process_log!(log::StepTimer, _rates, t)
     log.step_counter[] += 1
@@ -131,10 +120,8 @@ function flush!(log::StepTimer)
     open(log.path, "w") do io
         println(io, "{")
         println(io, "  \"frequency\": ", log.frequency, ",")
-        println(io, "  \"wallTime\": [",
-                join(log.timestamps_wall .- log.init_time, ", "), "],")
-        println(io, "  \"simulationTime\": [",
-                join(log.timestamps_simulation, ", "), "]")
+        println(io, "  \"wallTime\": [", join(log.timestamps_wall .- log.init_time, ", "), "],")
+        println(io, "  \"simulationTime\": [", join(log.timestamps_simulation, ", "), "]")
         println(io, "}")
     end
 end
@@ -158,45 +145,52 @@ intervals of wall time.
   |u|^{max})`` is reported instead.
 """
 struct ProgressMonitor
-    range
-    frequency
-    description
-    timestamp
-    progress
-    remaining
-    showprogress
-    sampling
-    samples
-    prefactors
-    boundaries
-    comm
+    range::Any
+    frequency::Any
+    description::Any
+    timestamp::Any
+    progress::Any
+    remaining::Any
+    showprogress::Any
+    sampling::Any
+    samples::Any
+    prefactors::Any
+    boundaries::Any
+    comm::Any
 
-    function ProgressMonitor(domain, grid, tspan;
-                             frequency = 10,
-                             description = "Progress:",
-                             tstep = nothing,
-                            )
+    function ProgressMonitor(domain, grid, tspan; frequency = 10, description = "Progress:", tstep = nothing)
         showprogress = !MPI.Initialized() || MPI.Comm_rank(grid.comm) == 0
         Δζ = 1 / grid.n3global
         Δx3c = [Δζ / scalefactor(domain, 3, ζ) for ζ in vrange(grid, NodeSet(:C))]
         Δx3i = [Δζ / scalefactor(domain, 3, ζ) for ζ in vrange(grid, NodeSet(:I))]
         cweight = Δx3c / size(domain, 3)
         iweight = Δx3i / size(domain, 3)
-        prefactors = Any[:cweight => cweight, :iweight => iweight, :Δx3i => Δx3i]
+        prefactors = Any[:cweight=>cweight, :iweight=>iweight, :Δx3i=>Δx3i]
         isnothing(tstep) || push!(prefactors, :tstep => tstep)
         # wall stresses are only collected at the boundaries
         # TODO: use cartesian coordinates here
         s, r = isnothing(grid.comm) ? (1, 1) : (MPI.Comm_size(grid.comm), MPI.Comm_rank(grid.comm) + 1)
         boundaries = (r == 1, s == r)
-        new(tspan, frequency, description, Ref(NaN), Ref(NaN), Ref(NaN), showprogress,
-            Ref(false), Pair[], NamedTuple(prefactors), boundaries, grid.comm)
+        new(
+            tspan,
+            frequency,
+            description,
+            Ref(NaN),
+            Ref(NaN),
+            Ref(NaN),
+            showprogress,
+            Ref(false),
+            Pair[],
+            NamedTuple(prefactors),
+            boundaries,
+            grid.comm,
+        )
     end
 end
 
-ProgressMonitor(; kwargs...) = (output=ProgressMonitor, kwargs...)
+ProgressMonitor(; kwargs...) = (output = ProgressMonitor, kwargs...)
 
 function prepare_samples!(pm::ProgressMonitor, t)
-
     progress = (t - pm.range[1]) / (pm.range[2] - pm.range[1])
     #pm.steps[] += 1 # TODO: measure time per step
     now = time()
@@ -227,14 +221,16 @@ function largest(field, state)
     error("Could not find field `$field`")
 end
 
-global_maximum(x, comm) = MPI.Initialized() ? MPI.Reduce(maximum(x, init=-Inf), MPI.MAX, 0, comm) : maximum(x, init=-Inf)
-global_minimum(x, comm) = MPI.Initialized() ? MPI.Reduce(minimum(x, init=Inf), MPI.MIN, 0, comm) : minimum(x, init=Inf)
+global_maximum(x, comm) =
+    MPI.Initialized() ? MPI.Reduce(maximum(x; init = -Inf), MPI.MAX, 0, comm) : maximum(x; init = -Inf)
+global_minimum(x, comm) =
+    MPI.Initialized() ? MPI.Reduce(minimum(x; init = Inf), MPI.MIN, 0, comm) : minimum(x; init = Inf)
 global_sum(x, comm) = MPI.Initialized() ? MPI.Reduce(sum(x), MPI.SUM, 0, comm) : sum(x)
 
 function log_sample!(pm::ProgressMonitor, (field, values)::Pair, t; bcs = nothing)
     pm.sampling[] || return
     if field in (:sgs13, :sgs23)
-        bvals = Tuple(pm.boundaries[i] ? hmean(bcs[i].type) : zero(eltype(values)) for i=1:2)
+        bvals = Tuple(pm.boundaries[i] ? hmean(bcs[i].type) : zero(eltype(values)) for i in 1:2)
         bvals = global_sum.(bvals, (pm.comm,))
         label = "Wall Stress τ$(field == :sgs13 ? '₁' : '₂')₃"
         push!(pm.samples, label => bvals)
@@ -243,10 +239,10 @@ end
 
 function log_state!(pm::ProgressMonitor, state::NamedTuple, t)
     pm.sampling[] || return
-    vel1avg = global_sum(real(state.vel1[1,1,:]) .* pm.prefactors.cweight, pm.comm)
-    vel2avg = global_sum(real(state.vel2[1,1,:]) .* pm.prefactors.cweight, pm.comm)
+    vel1avg = global_sum(real(state.vel1[1, 1, :]) .* pm.prefactors.cweight, pm.comm)
+    vel2avg = global_sum(real(state.vel2[1, 1, :]) .* pm.prefactors.cweight, pm.comm)
     # TODO: include boundary values in mean of vel3 (interpolate to C-nodes)
-    vel3avg = global_sum(real(state.vel3[1,1,:]) .* pm.prefactors.iweight, pm.comm)
+    vel3avg = global_sum(real(state.vel3[1, 1, :]) .* pm.prefactors.iweight, pm.comm)
     push!(pm.samples, "Mean Velocity" => (vel1avg, vel2avg, vel3avg))
 end
 
@@ -258,24 +254,23 @@ function log_state!(pm::ProgressMonitor, state::Dict, t)
     vel3 = largest(:vel3, state)
 
     # TODO: add vertical component to energy terms
-    vel1avg = sum(vel1, dims=(1,2))[:] / prod(size(vel1)[1:2])
-    vel2avg = sum(vel2, dims=(1,2))[:] / prod(size(vel2)[1:2])
-    mke = vel1avg.^2 .+ vel2avg.^2
+    vel1avg = sum(vel1; dims = (1, 2))[:] / prod(size(vel1)[1:2])
+    vel2avg = sum(vel2; dims = (1, 2))[:] / prod(size(vel2)[1:2])
+    mke = vel1avg .^ 2 .+ vel2avg .^ 2
 
-    ke   = sum(abs2, vel1, dims=(1,2)) / prod(size(vel1)[1:2])
-    ke .+= sum(abs2, vel2, dims=(1,2)) / prod(size(vel2)[1:2])
+    ke = sum(abs2, vel1; dims = (1, 2)) / prod(size(vel1)[1:2])
+    ke .+= sum(abs2, vel2; dims = (1, 2)) / prod(size(vel2)[1:2])
     tke = ke .- mke
 
     push!(pm.samples, "Mean KE" => global_sum(mke, pm.comm))
     push!(pm.samples, "Turbulent KE" => global_sum(tke, pm.comm))
 
-    dtmin = global_minimum(pm.prefactors.Δx3i ./ maximum(abs, vel3, dims=(1,2))[:], pm.comm)
+    dtmin = global_minimum(pm.prefactors.Δx3i ./ maximum(abs, vel3; dims = (1, 2))[:], pm.comm)
     if haskey(pm.prefactors, :tstep) && !isnothing(dtmin) # value only at root process
         push!(pm.samples, "Adv. Courant Number" => pm.prefactors.tstep / dtmin)
     else
         push!(pm.samples, "Advective Timescale" => dtmin)
     end
-
 end
 
 function process_log!(pm::ProgressMonitor, rates, t)
@@ -295,9 +290,8 @@ function process_log!(pm::ProgressMonitor, rates, t)
 
     # prog to intervals
     ip = round(Int, pm.progress[] * L * 8) # between 0 and 8*L
-    bar = prod(blocks[clamp(1+ip-is, 1:9)] for is = 0:8:8*L-1)
-    msg = string(pm.description, " ", @sprintf("%3.0f", 100 * pm.progress[]),
-                "%▕", bar, "▏ ETA: ", eta)
+    bar = prod(blocks[clamp(1 + ip - is, 1:9)] for is in 0:8:8*L-1)
+    msg = string(pm.description, " ", @sprintf("%3.0f", 100 * pm.progress[]), "%▕", bar, "▏ ETA: ", eta)
     wt = length(msg)
     println('─'^wt)
     println(msg)
@@ -307,12 +301,11 @@ function process_log!(pm::ProgressMonitor, rates, t)
     println('─'^wl, '┬', '─'^wr)
     for (label, vals) in pm.samples
         vals = join([@sprintf("%.3g", v) for v in vals], ", ")
-        println(lpad(label, wl-1), " ╎ ", vals)
+        println(lpad(label, wl - 1), " ╎ ", vals)
     end
     println('─'^wl, '┴', '─'^wr)
     flush(stdout)
 end
-
 
 """
     MeanProfiles(; kwargs...)
@@ -338,20 +331,24 @@ be written regularly during a simulation.
   may be skipped.
 """
 struct MeanProfiles{T}
-    path
-    output_frequency
+    path::Any
+    output_frequency::Any
     means::Dict{Symbol,Vector{T}}
     samples::Dict{Symbol,Tuple{Vector{T},Ref{T}}}
     timespan::Vector{T}
     intervals::Ref{Int}
     boundaries::Tuple{Bool,Bool}
-    comm
+    comm::Any
 
-    function MeanProfiles(domain::Domain{T}, grid, tspan;
-            profiles = nothing,
-            path = joinpath("output", "profiles"),
-            # TODO: support specfiying sample frequency
-            output_frequency = nothing) where T
+    function MeanProfiles(
+        domain::Domain{T},
+        grid,
+        tspan;
+        profiles = nothing,
+        path = joinpath("output", "profiles"),
+        # TODO: support specfiying sample frequency
+        output_frequency = nothing,
+    ) where {T}
 
         # for I-nodes, we also include the boundary-values in the profile (set
         # to zero by default, i.e. if terms do not log the boundary conditions)
@@ -364,12 +361,11 @@ struct MeanProfiles{T}
         samples = Dict(f => (profile(f), Ref(convert(T, NaN))) for f in profiles)
 
         mkpath(dirname(path))
-        new{T}(path, output_frequency, means, samples, [first(tspan), first(tspan)],
-               Ref(0), boundaries, grid.comm)
+        new{T}(path, output_frequency, means, samples, [first(tspan), first(tspan)], Ref(0), boundaries, grid.comm)
     end
 end
 
-MeanProfiles(profiles = (:vel1, :vel2, :vel3); kwargs...) = (output=MeanProfiles, profiles=profiles, kwargs...)
+MeanProfiles(profiles = (:vel1, :vel2, :vel3); kwargs...) = (output = MeanProfiles, profiles = profiles, kwargs...)
 
 function prepare_samples!(mp::MeanProfiles, t)
     # add first half of trapezoidal integral
@@ -382,7 +378,6 @@ function prepare_samples!(mp::MeanProfiles, t)
 end
 
 function log_sample!(mp::MeanProfiles, (field, values)::Pair, t; bcs = nothing)
-
     haskey(mp.samples, field) || return
     sample, timestamp = mp.samples[field]
     timestamp[] < t || isnan(timestamp[]) || return # avoid collecting same sample twice
@@ -394,7 +389,7 @@ function log_sample!(mp::MeanProfiles, (field, values)::Pair, t; bcs = nothing)
     else
         1+Int(mp.boundaries[1]):length(sample)-Int(mp.boundaries[2])
     end
-    for i3 = 1:length(i3s)
+    for i3 in 1:length(i3s)
         sample[i3s[i3]] = hmean(view(values, :, :, i3))
     end
 
@@ -413,8 +408,7 @@ function log_sample!(mp::MeanProfiles, (field, values)::Pair, t; bcs = nothing)
     mp
 end
 
-hmean(values::AbstractArray) = eltype(values) <: Real ?
-    sum(values) / prod(size(values)) : real(values[1,1])
+hmean(values::AbstractArray) = eltype(values) <: Real ? sum(values) / prod(size(values)) : real(values[1, 1])
 hmean(bc::DynamicValues) = hmean(bc.values)
 hmean(bc::ConstantValue) = bc.value
 
@@ -456,7 +450,7 @@ function process_log!(mp::MeanProfiles, rates, t)
     reset!(mp)
 end
 
-function flush!(mp::MeanProfiles{T}) where T
+function flush!(mp::MeanProfiles{T}) where {T}
 
     # since flush! is always called at the end of a simulation, it might be
     # called twice in a row without new data
@@ -552,24 +546,27 @@ files at regular intervals during the simulation.
   for the simulation by the `Model`.
 """
 struct Snapshots{T}
-    frequency
-    path
-    transform
-    xlimits
-    xranges
-    comm
+    frequency::Any
+    path::Any
+    transform::Any
+    xlimits::Any
+    xranges::Any
+    comm::Any
     centered::Bool
 
-    function Snapshots(domain::Domain{T}, grid, tspan;
-            path = joinpath("output", "snapshots"),
-            frequency = nothing,
-            centered = true,
-            precision::DataType = T) where T
-
+    function Snapshots(
+        domain::Domain{T},
+        grid,
+        tspan;
+        path = joinpath("output", "snapshots"),
+        frequency = nothing,
+        centered = true,
+        precision::DataType = T,
+    ) where {T}
         dims = default_size(grid)
         transform = Transform2D(precision, dims)
-        x1 = x1range(domain, h1range(dims, centered=centered))
-        x2 = x2range(domain, h2range(dims, centered=centered))
+        x1 = x1range(domain, h1range(dims; centered = centered))
+        x2 = x2range(domain, h2range(dims; centered = centered))
         x3c = x3range(domain, vrange(grid, NodeSet(:C)))
         x3i = x3range(domain, vrange(grid, NodeSet(:I)))
         xlimits = extrema(domain)
@@ -579,29 +576,29 @@ struct Snapshots{T}
     end
 end
 
-Snapshots(; kwargs...) = (output=Snapshots, kwargs...)
+Snapshots(; kwargs...) = (output = Snapshots, kwargs...)
 
 # only applies to frequency-space state
-function log_state!(snaps::Snapshots{Ts}, state::NamedTuple, t) where Ts
+function log_state!(snaps::Snapshots{Ts}, state::NamedTuple, t) where {Ts}
 
     # skip initial state, and only save at specified frequency, but allow for
     # floating-point imprecisions
     t == 0 && return
-    n = round(Int, t/snaps.frequency)
-    n ≈ t/snaps.frequency || return
+    n = round(Int, t / snaps.frequency)
+    n ≈ t / snaps.frequency || return
 
     xmin, xmax = snaps.xlimits
     x1, x2, x3c, x3i = snaps.xranges
 
     for field in keys(state)
         path = joinpath(snaps.path, @sprintf("state-%03d", n), "$field.cbd")
-        x3 = nodes(field) isa NodeSet{:C} ? x3c : nodes(field) isa NodeSet{:I} ? x3i : error("Invalid nodes for field `$field`")
+        x3 =
+            nodes(field) isa NodeSet{:C} ? x3c :
+            nodes(field) isa NodeSet{:I} ? x3i : error("Invalid nodes for field `$field`")
 
-        pfield = get_field(snaps.transform, state[field], centered = snaps.centered)
+        pfield = get_field(snaps.transform, state[field]; centered = snaps.centered)
         writecbd(Ts, path, pfield, x1, x2, x3, xmin, xmax, snaps.comm)
     end
 end
-
-
 
 end # module Logging

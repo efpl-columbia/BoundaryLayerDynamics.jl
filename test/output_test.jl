@@ -1,11 +1,8 @@
-function test_file_io(; n1=6, n2=8, n3=12)
-
+function test_file_io(; n1 = 6, n2 = 8, n3 = 12)
     Random.seed!(73330459108) # same seed for each process
 
     mktempdir_parallel() do p
-
-        for T=(Float32, Float64), ns=(:C, :I)
-
+        for T in (Float32, Float64), ns in (:C, :I)
             ds = (rand(T), rand(T), rand(T))
             vel0(x, y, z) = x / ds[1] + y / ds[2] + z / ds[3]
             xmin, xmax = (zero(T), zero(T), zero(T)), ds
@@ -15,17 +12,15 @@ function test_file_io(; n1=6, n2=8, n3=12)
             pdims = BLD.PhysicalSpace.default_size(grid)
             transform = BLD.PhysicalSpace.Transform2D(T, pdims)
 
-            x1 = collect(LinRange(0, ds[1], pdims[1]+1)[1:pdims[1]])
-            x2 = collect(LinRange(0, ds[2], pdims[2]+1)[1:pdims[2]])
-            x3 = collect(LinRange(0, ds[3], 2*n3+1)[(ns == :C ? 2 : 3):2:end-1])
+            x1 = collect(LinRange(0, ds[1], pdims[1] + 1)[1:pdims[1]])
+            x2 = collect(LinRange(0, ds[2], pdims[2] + 1)[1:pdims[2]])
+            x3 = collect(LinRange(0, ds[3], 2 * n3 + 1)[(ns == :C ? 2 : 3):2:end-1])
             x3local = x3[grid.i3min:min(grid.i3max, length(x3))]
 
-            fvel = BLD.PhysicalSpace.set_field!(vel0, zeros(T, grid, NS(ns)),
-                                                transform, domain, grid, NS(ns))
+            fvel = BLD.PhysicalSpace.set_field!(vel0, zeros(T, grid, NS(ns)), transform, domain, grid, NS(ns))
             vel = BLD.PhysicalSpace.get_field(transform, fvel)
 
-            for T_files=(Float32, Float64)
-
+            for T_files in (Float32, Float64)
                 fn = joinpath(p, string("vel-", T_files, "-from-", T, "-", ns, ".cbd"))
                 BLD.CBD.writecbd(T_files, fn, vel, x1, x2, x3local, xmin, xmax, grid.comm)
 
@@ -48,14 +43,18 @@ function test_file_io(; n1=6, n2=8, n3=12)
     end
 end
 
-function test_shifted_file_output(T=Float64; n1=6, n2=8, n3=12)
-
+function test_shifted_file_output(T = Float64; n1 = 6, n2 = 8, n3 = 12)
     Random.seed!(839905175168) # same seed for each process
     k1max, k2max = div(n1 - 1, 2), div(n2 - 1, 2)
     C0, Cx, Cy = rand(T), rand(T, 2, k1max), rand(T, 2, k2max)
-    vel0(x, y, z) = ( sum(Cx[1,i] * sin(i * x + Cx[2,i]) for i=1:k1max)
-                    + sum(Cy[1,i] * sin(i * y + Cy[2,i]) for i=1:k1max)
-                    + C0 ) * z * (1-z)
+    vel0(x, y, z) =
+        (
+            sum(Cx[1, i] * sin(i * x + Cx[2, i]) for i in 1:k1max) +
+            sum(Cy[1, i] * sin(i * y + Cy[2, i]) for i in 1:k1max) +
+            C0
+        ) *
+        z *
+        (1 - z)
 
     ds = convert.(T, (2π, 2π, 1))
     xmin, xmax = (zero(T), zero(T), zero(T)), ds
@@ -63,18 +62,16 @@ function test_shifted_file_output(T=Float64; n1=6, n2=8, n3=12)
 
     grid = BLD.Grid((n1, n2, n3))
     pdims = BLD.PhysicalSpace.default_size(grid)
-    x1 = collect(LinRange(0, ds[1], 2*pdims[1]+1)[2:2:end-1])
-    x2 = collect(LinRange(0, ds[2], 2*pdims[2]+1)[2:2:end-1])
-    x3 = collect(LinRange(0, ds[3], 2*n3+1)[2:end-1]) # both sets of nodes
+    x1 = collect(LinRange(0, ds[1], 2 * pdims[1] + 1)[2:2:end-1])
+    x2 = collect(LinRange(0, ds[2], 2 * pdims[2] + 1)[2:2:end-1])
+    x3 = collect(LinRange(0, ds[3], 2 * n3 + 1)[2:end-1]) # both sets of nodes
     #x3local = x3[grid.i3min:min(grid.i3max, length(x3))]
 
     transform = BLD.PhysicalSpace.Transform2D(T, pdims)
 
-    for ns = (:C, :I)
-
-        fvel = BLD.PhysicalSpace.set_field!(vel0, zeros(T, grid, NS(ns)),
-                                            transform, domain, grid, NS(ns))
-        vel = BLD.PhysicalSpace.get_field(transform, fvel, centered = true)
+    for ns in (:C, :I)
+        fvel = BLD.PhysicalSpace.set_field!(vel0, zeros(T, grid, NS(ns)), transform, domain, grid, NS(ns))
+        vel = BLD.PhysicalSpace.get_field(transform, fvel; centered = true)
 
         x3ns = x3[(ns == :C ? 1 : 2):2:end]
         x3local = x3ns[grid.i3min:min(grid.i3max, length(x3ns))]
@@ -90,7 +87,7 @@ function test_shifted_file_output(T=Float64; n1=6, n2=8, n3=12)
         @test x1_file == x1
         @test x2_file == x2
         @test global_vector(x3_file) == x3ns
-        @test data_file ≈ [vel0(x1, x2, x3) for x1=x1_file, x2=x2_file, x3=x3local]
+        @test data_file ≈ [vel0(x1, x2, x3) for x1 in x1_file, x2 in x2_file, x3 in x3local]
     end
 end
 
@@ -99,6 +96,6 @@ end
     test_shifted_file_output()
 
     # also test the parallel version with one layer per process
-    MPI.Initialized() && test_file_io(n3=max(MPI.Comm_size(MPI.COMM_WORLD), 3))
-    MPI.Initialized() && test_shifted_file_output(n3=max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    MPI.Initialized() && test_file_io(; n3 = max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    MPI.Initialized() && test_shifted_file_output(; n3 = max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end

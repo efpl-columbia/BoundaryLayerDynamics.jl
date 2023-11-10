@@ -6,7 +6,6 @@ const CBD_VERSION = 1
 using MPI: MPI
 
 function sequential_open(f, filename, mode, comm)
-
     N, id = MPI.Initialized() ? (MPI.Comm_size(comm), MPI.Cart_coords(comm)[] + 1) : (1, 1)
 
     if id == 1 && !(mode in ("r", "r+"))
@@ -15,7 +14,7 @@ function sequential_open(f, filename, mode, comm)
     MPI.Initialized() && MPI.Barrier(comm)
 
     r = nothing
-    for i=1:N
+    for i in 1:N
         if i == id
             r = open(f, filename, mode)
         end
@@ -24,14 +23,13 @@ function sequential_open(f, filename, mode, comm)
     r
 end
 
-function writecbd(::Type{T}, filename, field, x1, x2, x3, xmin, xmax, comm) where T
+function writecbd(::Type{T}, filename, field, x1, x2, x3, xmin, xmax, comm) where {T}
 
     # build first value, describing the version of the file format that is used
     identifier = zeros(UInt8, 8)
     identifier[1:2] = MAGIC_NUMBER
-    identifier[3]   = CBD_VERSION
-    identifier[end] = T == Float64 ? 0x8 : T == Float32 ? 0x4 :
-            error("Only 64-bit and 32-bit precision is supported.")
+    identifier[3] = CBD_VERSION
+    identifier[end] = T == Float64 ? 0x8 : T == Float32 ? 0x4 : error("Only 64-bit and 32-bit precision is supported.")
 
     # make sure the dimensions are compatible
     n1, n2, n3 = size(field)
@@ -64,8 +62,7 @@ function writecbd(::Type{T}, filename, field, x1, x2, x3, xmin, xmax, comm) wher
     end
 end
 
-function readcbd(filename, x3range, comm; tol=1e-9)
-
+function readcbd(filename, x3range, comm; tol = 1e-9)
     grid_points = zeros(UInt64, 3)
     xmin = zeros(Float64, 3)
     xmax = zeros(Float64, 3)
@@ -74,14 +71,13 @@ function readcbd(filename, x3range, comm; tol=1e-9)
 
         # parse identifier and select precision
         identifier = read!(f, zeros(UInt8, 8))
-        identifier[1:2] == MAGIC_NUMBER ||
-            @error "Not a CBD file (magic number not matching)." identifier[1:2]
-        identifier[3] == CBD_VERSION ||
-            @error "Unsupported version of CBD format." identifier[3]
-        T = identifier[end] == 0x4 ? Float32 : identifier[end] == 0x8 ? Float64 :
+        identifier[1:2] == MAGIC_NUMBER || @error "Not a CBD file (magic number not matching)." identifier[1:2]
+        identifier[3] == CBD_VERSION || @error "Unsupported version of CBD format." identifier[3]
+        T =
+            identifier[end] == 0x4 ? Float32 :
+            identifier[end] == 0x8 ? Float64 :
             @error "Unsupported data type: Only 32-bit and 64-bit precision is supported."
-        bytes_per_value = T == Float64 ? 8 : T == Float32 ? 4 :
-            error("Bytes per value not known for type ", T)
+        bytes_per_value = T == Float64 ? 8 : T == Float32 ? 4 : error("Bytes per value not known for type ", T)
 
         read!(f, grid_points)
         read!(f, xmin)
@@ -103,8 +99,8 @@ function readcbd(filename, x3range, comm; tol=1e-9)
             (findlast(x -> x < x3min + tol, x3), findfirst(x -> x > x3max - tol, x3))
         end
 
-        data = zeros(T, grid_points[1], grid_points[2], 1+i3max-i3min)
-        skip(f, grid_points[1] * grid_points[2] * (i3min-1) * bytes_per_value)
+        data = zeros(T, grid_points[1], grid_points[2], 1 + i3max - i3min)
+        skip(f, grid_points[1] * grid_points[2] * (i3min - 1) * bytes_per_value)
         read!(f, data)
 
         Tuple(xmin), Tuple(xmax), x1, x2, x3[i3min:i3max], data
@@ -112,8 +108,7 @@ function readcbd(filename, x3range, comm; tol=1e-9)
 end
 
 # for serial i/o, the communicator (and the local x3-range) can be omitted
-writecbd(T, filename, field, x1, x2, x3, xmin, xmax) =
-    writecbd(T, filename, field, x1, x2, x3, xmin, xmax, nothing)
+writecbd(T, filename, field, x1, x2, x3, xmin, xmax) = writecbd(T, filename, field, x1, x2, x3, xmin, xmax, nothing)
 readcbd(filename; kwargs...) = readcbd(filename, (-Inf, Inf), nothing; kwargs...)
 
 end # module CBD

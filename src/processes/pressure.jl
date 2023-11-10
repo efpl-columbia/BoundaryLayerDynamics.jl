@@ -36,7 +36,6 @@ can be found in section 3.7.2 of the book “Numerical Mathematics” by Quarter
 Sacco & Saleri (2007).
 """
 struct DistributedBatchLDLt{Nb,Na,Tm,Tv,B,C} #<: AbstractMatrix{T}
-
     γ::Matrix{Tm} # diagonal
     β::Matrix{Tm} # off-diagonal
 
@@ -45,17 +44,21 @@ struct DistributedBatchLDLt{Nb,Na,Tm,Tv,B,C} #<: AbstractMatrix{T}
 
     comm::C
 
-    DistributedBatchLDLt(::Type{Tm}, dvs, evs, rhs, batch_size, comm) where Tm = begin
-
+    DistributedBatchLDLt(::Type{Tm}, dvs, evs, rhs, batch_size, comm) where {Tm} = begin
         C = typeof(comm)
         Nb, Na = neighbors(comm)
 
         nk = length(dvs)
         nz = size(rhs, ndims(rhs)) # last dimension of rhs
-        length(dvs) == length(evs) == prod(size(rhs)[1:ndims(rhs)-1]) ||
-                error("Batch size of dv (nk=", length(dvs), "), ev (nk=",
-                length(evs), "), and rhs (nk=", prod(size(rhs)[1:ndims(rhs)-1]),
-                ") not compatible")
+        length(dvs) == length(evs) == prod(size(rhs)[1:ndims(rhs)-1]) || error(
+            "Batch size of dv (nk=",
+            length(dvs),
+            "), ev (nk=",
+            length(evs),
+            "), and rhs (nk=",
+            prod(size(rhs)[1:ndims(rhs)-1]),
+            ") not compatible",
+        )
 
         nz_dv = nz
         nz_ev = nz + 1 - sum(isnothing.((Nb, Na)))
@@ -69,7 +72,8 @@ struct DistributedBatchLDLt{Nb,Na,Tm,Tv,B,C} #<: AbstractMatrix{T}
             eltype(dv) == eltype(ev) == Tm || error("Incompatible element types")
             ndims(dv) == ndims(ev) == 1 || error("More than one dimensions for diagonal vectors")
             length(dv) == nz_dv || error("Length of diagonal (", length(dv), ") not equal to ", nz_dv)
-            length(ev) == length(iz_min_ev:nz_ev) || error("Length of off-diagonal (", length(ev), ") not equal to ", length(iz_min_ev:nz_ev))
+            length(ev) == length(iz_min_ev:nz_ev) ||
+                error("Length of off-diagonal (", length(ev), ") not equal to ", length(iz_min_ev:nz_ev))
             copyto!(view(γ, ik, :), dv)
             copyto!(view(β, ik, iz_min_ev:nz_ev), ev)
         end
@@ -82,12 +86,12 @@ struct DistributedBatchLDLt{Nb,Na,Tm,Tv,B,C} #<: AbstractMatrix{T}
         if !isnothing(Nb)
             γ_below = zeros(Tm, nk)
             get_from_proc!(γ_below, Nb, comm)
-            @views @. γ[:,1] = 1 / (γ[:,1] - γ_below * β[:,1]^2)
+            @views @. γ[:, 1] = 1 / (γ[:, 1] - γ_below * β[:, 1]^2)
         else
-            @views @. γ[:,1] = 1 / γ[:,1]
+            @views @. γ[:, 1] = 1 / γ[:, 1]
         end
-        for i=2:nz
-            @views @. γ[:,i] = 1 / (γ[:,i] - γ[:,i-1] * β[:,(iz_min_ev-1)+i-1]^2)
+        for i in 2:nz
+            @views @. γ[:, i] = 1 / (γ[:, i] - γ[:, i-1] * β[:, (iz_min_ev-1)+i-1]^2)
         end
         isnothing(Na) || send_to_proc(view(γ, :, nz_dv), Na, comm)
 
@@ -96,31 +100,34 @@ struct DistributedBatchLDLt{Nb,Na,Tm,Tv,B,C} #<: AbstractMatrix{T}
     end
 end
 
-send_to_proc(data, proc, comm, tag=0) =
-    MPI.Send(data, proc, tag, comm)
-get_from_proc!(data, proc, comm, tag=MPI.ANY_TAG) =
-    MPI.Recv!(data, proc, tag, comm)
+send_to_proc(data, proc, comm, tag = 0) = MPI.Send(data, proc, tag, comm)
+get_from_proc!(data, proc, comm, tag = MPI.ANY_TAG) = MPI.Recv!(data, proc, tag, comm)
 
-function symthomas_batch_fwd!(b::AbstractArray{Tv,2},
-    γ::AbstractArray{Tm,2}, β::AbstractArray{Tm,2},
-    buffer::AbstractArray{Tv,1}, (Nb, Na), comm) where {Tm,Tv}
+function symthomas_batch_fwd!(
+    b::AbstractArray{Tv,2},
+    γ::AbstractArray{Tm,2},
+    β::AbstractArray{Tm,2},
+    buffer::AbstractArray{Tv,1},
+    (Nb, Na),
+    comm,
+) where {Tm,Tv}
     nk, nz = size(b)
     if !isnothing(Nb)
         b_orig = b[1]
         get_from_proc!(buffer, Nb, comm)
-        for ik=1:nk
-            b[ik,1] = γ[ik,1] * (b[ik,1] - β[ik,1] * buffer[ik])
+        for ik in 1:nk
+            b[ik, 1] = γ[ik, 1] * (b[ik, 1] - β[ik, 1] * buffer[ik])
         end
     else
-        for ik=1:nk
-            b[ik,1] = γ[ik,1] * b[ik,1]
+        for ik in 1:nk
+            b[ik, 1] = γ[ik, 1] * b[ik, 1]
         end
     end
-    for iz=2:nz
-        iz_β = isnothing(Nb) ? iz-1 : iz
+    for iz in 2:nz
+        iz_β = isnothing(Nb) ? iz - 1 : iz
         #@views @. b[:,iz] = γ[:,iz] * (b[:,iz] - β[:,iz_β] * b[:,iz-1])
-        for ik=1:nk
-            b[ik,iz] = γ[ik,iz] * (b[ik,iz] - β[ik,iz_β] * b[ik,iz-1])
+        for ik in 1:nk
+            b[ik, iz] = γ[ik, iz] * (b[ik, iz] - β[ik, iz_β] * b[ik, iz-1])
         end
     end
     if !isnothing(Na)
@@ -129,21 +136,26 @@ function symthomas_batch_fwd!(b::AbstractArray{Tv,2},
     b
 end
 
-function symthomas_batch_bwd!(b::AbstractArray{Tv,2},
-    γ::AbstractArray{Tm,2}, β::AbstractArray{Tm,2},
-    buffer::AbstractArray{Tv,1}, (Nb, Na), comm) where {Tm,Tv}
+function symthomas_batch_bwd!(
+    b::AbstractArray{Tv,2},
+    γ::AbstractArray{Tm,2},
+    β::AbstractArray{Tm,2},
+    buffer::AbstractArray{Tv,1},
+    (Nb, Na),
+    comm,
+) where {Tm,Tv}
     nk, nz = size(b)
     if !isnothing(Na) # at the top b[end] = b[end], no change is needed
         b_orig = b[nz]
         get_from_proc!(buffer, Na, comm)
-        for ik=1:nk
-            b[ik,end] = b[ik,end] - γ[ik,end] * β[ik,end] * buffer[ik]
+        for ik in 1:nk
+            b[ik, end] = b[ik, end] - γ[ik, end] * β[ik, end] * buffer[ik]
         end
     end
-    for iz=nz-1:-1:1
-        iz_β = isnothing(Nb) ? iz : iz+1
-        for ik=1:nk
-            b[ik,iz] = b[ik,iz] - γ[ik,iz] * β[ik,iz_β] * b[ik,iz+1]
+    for iz in nz-1:-1:1
+        iz_β = isnothing(Nb) ? iz : iz + 1
+        for ik in 1:nk
+            b[ik, iz] = b[ik, iz] - γ[ik, iz] * β[ik, iz_β] * b[ik, iz+1]
         end
     end
     if !isnothing(Nb)
@@ -152,25 +164,37 @@ function symthomas_batch_bwd!(b::AbstractArray{Tv,2},
     b
 end
 
-function LinearAlgebra.ldiv!(A_batch::DistributedBatchLDLt{Nb,Na,Tm,Tv,B},
-        b_batch::AbstractArray{Tv}) where {Nb,Na,Tm,Tv,B}
+function LinearAlgebra.ldiv!(
+    A_batch::DistributedBatchLDLt{Nb,Na,Tm,Tv,B},
+    b_batch::AbstractArray{Tv},
+) where {Nb,Na,Tm,Tv,B}
     nk, nz = size(A_batch.γ)
     b_batch_reshaped = reshape(b_batch, nk, nz)
 
     # forward pass
-    for ik_min=1:B:nk
+    for ik_min in 1:B:nk
         ik_max = min(ik_min + B - 1, nk) # batch size might not be divisible by B
-        symthomas_batch_fwd!(view(b_batch_reshaped, ik_min:ik_max, :),
-            view(A_batch.γ, ik_min:ik_max, :), view(A_batch.β, ik_min:ik_max, :),
-            view(A_batch.buffer, 1:1+ik_max-ik_min), (Nb, Na), A_batch.comm)
+        symthomas_batch_fwd!(
+            view(b_batch_reshaped, ik_min:ik_max, :),
+            view(A_batch.γ, ik_min:ik_max, :),
+            view(A_batch.β, ik_min:ik_max, :),
+            view(A_batch.buffer, 1:1+ik_max-ik_min),
+            (Nb, Na),
+            A_batch.comm,
+        )
     end
 
     # backward pass
-    for ik_min=1:B:nk
+    for ik_min in 1:B:nk
         ik_max = min(ik_min + B - 1, nk) # batch size might not be divisible by B
-        symthomas_batch_bwd!(view(b_batch_reshaped, ik_min:ik_max, :),
-            view(A_batch.γ, ik_min:ik_max, :), view(A_batch.β, ik_min:ik_max, :),
-            view(A_batch.buffer, 1:1+ik_max-ik_min), (Nb, Na), A_batch.comm)
+        symthomas_batch_bwd!(
+            view(b_batch_reshaped, ik_min:ik_max, :),
+            view(A_batch.γ, ik_min:ik_max, :),
+            view(A_batch.β, ik_min:ik_max, :),
+            view(A_batch.buffer, 1:1+ik_max-ik_min),
+            (Nb, Na),
+            A_batch.comm,
+        )
     end
 
     b_batch
@@ -178,7 +202,6 @@ end
 
 LinearAlgebra.ldiv!(x, A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(A, copyto!(x, b))
 LinearAlgebra.:\(A::DistributedBatchLDLt, b) = LinearAlgebra.ldiv!(similar(b), A, b)
-
 
 """
     Pressure(batch_size = 64)
@@ -205,7 +228,7 @@ Base.nameof(::DiscretizedPressure) = "Pressure Solver"
 
 state_fields(::DiscretizedPressure) = (:vel1, :vel2, :vel3)
 
-function init_process(press::Pressure, domain::Domain{T}, grid) where T
+function init_process(press::Pressure, domain::Domain{T}, grid) where {T}
 
     # Compute the off-diagonal of D₃G₃, excluding the αc-factor: α(0), α(1), …, α(N-1)
     ps_offdiagonal = dx3factors(domain, grid, NodeSet(:I))
@@ -213,31 +236,36 @@ function init_process(press::Pressure, domain::Domain{T}, grid) where T
     # set up function to compute diagonal terms of matrix
     d3g3 = d3g3_diagonal(domain, grid)
     αc = dx3factors(domain, grid, NodeSet(:C))
-    ps_diagonal(k1, k2) = (k1 == k2 == 0) ? adjust_d3g3_diagonal(copy(d3g3), domain, grid) :
-        T[d3g3[i] - 4 * π^2 * (k1^2 * scalefactor(domain, 1)^2 + k2^2 * scalefactor(domain, 2)^2) ./ αc[i] for i=1:length(αc)]
+    ps_diagonal(k1, k2) =
+        (k1 == k2 == 0) ? adjust_d3g3_diagonal(copy(d3g3), domain, grid) :
+        T[
+            d3g3[i] - 4 * π^2 * (k1^2 * scalefactor(domain, 1)^2 + k2^2 * scalefactor(domain, 2)^2) ./ αc[i] for
+            i in 1:length(αc)
+        ]
 
     # set up generators that produce diagonals for each wavenumber pair
     # note: the offdiagonal is always the same so the generator simply returns
     # the precomputed array
     k1, k2 = wavenumbers(grid)
-    dvs = (ps_diagonal(k1, k2) for k1=k1, k2=k2)
-    evs = (ps_offdiagonal for k1=k1, k2=k2)
+    dvs = (ps_diagonal(k1, k2) for k1 in k1, k2 in k2)
+    evs = (ps_offdiagonal for k1 in k1, k2 in k2)
 
     solver = DistributedBatchLDLt(T, dvs, evs, zeros(T, grid, NodeSet(:C)), press.batch_size, grid.comm)
 
-    derivatives = (D1 = dx1factors(domain, wavenumbers(grid)),
-                   D2 = dx2factors(domain, wavenumbers(grid)),
-                   D3c = dx3factors(domain, grid, NodeSet(:C)),
-                   D3i = dx3factors(domain, grid, NodeSet(:I)))
+    derivatives = (
+        D1 = dx1factors(domain, wavenumbers(grid)),
+        D2 = dx2factors(domain, wavenumbers(grid)),
+        D3c = dx3factors(domain, grid, NodeSet(:C)),
+        D3i = dx3factors(domain, grid, NodeSet(:I)),
+    )
     bcs = (vel3 = init_bcs(:vel3, domain, grid), p = internal_bc(domain, grid))
 
     DiscretizedPressure(zeros(T, grid, NodeSet(:C)), derivatives, bcs, solver)
 end
 
 # Compute the diagonal of D₃G₃, excluding the αc-factor: -α(1), -α(1)-α(2), …, -α(N-2)-α(N-1), -α(N-1)
-function d3g3_diagonal(domain::Domain{T}, grid) where T
-    αi_ext = T[grid.n3global * scalefactor(domain, 3, ζ)
-               for ζ=vrange(grid, NodeSet(:C), neighbors=true)]
+function d3g3_diagonal(domain::Domain{T}, grid) where {T}
+    αi_ext = T[grid.n3global * scalefactor(domain, 3, ζ) for ζ in vrange(grid, NodeSet(:C); neighbors = true)]
     imin = grid.i3min == 1 ? 2 : 1 # exclude value at lower boundary
     imax = grid.n3i # exclude value at upper boundary
     dvs = zeros(T, grid.n3c)
@@ -261,9 +289,9 @@ function adjust_d3g3_diagonal(dvs, domain, grid)
     # the last off-diagonal value is evaluated at the last I-node, which might
     # already belong to the process below, so we select it as the lower
     # neighbor of the last C-node
-    last_ζi = vrange(grid, NodeSet(:C), neighbors=true)[end-1]
+    last_ζi = vrange(grid, NodeSet(:C); neighbors = true)[end-1]
     last_ev = grid.n3global * scalefactor(domain, 3, last_ζi)
-    dvs[end] = - 3 * last_ev
+    dvs[end] = -3 * last_ev
     dvs
 end
 
@@ -319,15 +347,14 @@ function solve_pressure!(p, vel, (lbc3, ubc3), df, solver)
     u2 = layers(vel[2])
     u3_expanded = layers_i2c(vel[3], lbc3, ubc3)
     for (i, p) in zip(1:size(p, 3), layers(p))
-        div!(p, u1[i], u2[i], u3_expanded[i:i+1], df.D1, df.D2, 1, 1/df.D3c[i])
+        div!(p, u1[i], u2[i], u3_expanded[i:i+1], df.D1, df.D2, 1, 1 / df.D3c[i])
     end
 
     # when k1=k2=0, one equation is redundant (as long as the mean flow at the
     # top and bottom is the same, which is required for mass conservation) and
     # is overwritten here to set the absolute value of pressure to zero at the
     # top of the domain
-    (lbc3.type.value == ubc3.type.value) ||
-        error("The mean flow must be equal at both vertical boundaries.")
+    (lbc3.type.value == ubc3.type.value) || error("The mean flow must be equal at both vertical boundaries.")
     adjust_pressure_rhs!(p, ubc3)
 
     LinearAlgebra.ldiv!(solver, p)
@@ -338,12 +365,17 @@ end
 # contributions with a (horizontally) constant value. This is used to run the
 # pressure solver on the system (α^C¯¹ DG) p = α^C¯¹ (D u + b_c), for which the
 # tridiagonal matrix is symmetric.
-div!(div, u1, u2, (u3¯, u3⁺), D1, D2, D3, hfactor=1) =
-    (@. div = u1 * D1 * hfactor + u2 * D2 * hfactor - D3 * u3¯ + D3 * u3⁺; div)
-div!(div::AbstractArray{T}, u1, u2, (u3¯, u3⁺)::Tuple{ConstantValue,A}, D1, D2, D3, hfactor=1) where {T <: Complex, A} =
-(@. div = u1 * D1 * hfactor + u2 * D2 * hfactor + D3 * u3⁺; div[1,1] -= D3 * u3¯.value; div)
-div!(div::AbstractArray{T}, u1, u2, (u3¯, u3⁺)::Tuple{A,ConstantValue}, D1, D2, D3, hfactor=1) where {T <: Complex, A} =
-    (@. div = u1 * D1 * hfactor + u2 * D2 * hfactor - D3 * u3¯; div[1,1] += D3 * u3⁺.value; div)
+div!(div, u1, u2, (u3¯, u3⁺), D1, D2, D3, hfactor = 1) =
+    (@. div = u1 * D1 * hfactor + u2 * D2 * hfactor - D3 * u3¯ + D3 * u3⁺;
+    div)
+div!(div::AbstractArray{T}, u1, u2, (u3¯, u3⁺)::Tuple{ConstantValue,A}, D1, D2, D3, hfactor = 1) where {T<:Complex,A} =
+    (@. div = u1 * D1 * hfactor + u2 * D2 * hfactor + D3 * u3⁺;
+    div[1, 1] -= D3 * u3¯.value;
+    div)
+div!(div::AbstractArray{T}, u1, u2, (u3¯, u3⁺)::Tuple{A,ConstantValue}, D1, D2, D3, hfactor = 1) where {T<:Complex,A} =
+    (@. div = u1 * D1 * hfactor + u2 * D2 * hfactor - D3 * u3¯;
+    div[1, 1] += D3 * u3⁺.value;
+    div)
 
 # for kx=ky=0, the top and bottom boundary condition have to be the same,
 # which corresponds to having the same integrated mass flux over both the
@@ -361,7 +393,7 @@ div!(div::AbstractArray{T}, u1, u2, (u3¯, u3⁺)::Tuple{A,ConstantValue}, D1, D
 # it could also be done by replacing a different line in order to get a
 # higher order approximation at the boundary, but there is little reason to
 # do so, since the absolute values don’t matter anyway.
-adjust_pressure_rhs!(p, ::BoundaryCondition{BC,Nb,nothing}) where {BC,Nb} = (p[1,1,end] = 0; p)
+adjust_pressure_rhs!(p, ::BoundaryCondition{BC,Nb,nothing}) where {BC,Nb} = (p[1, 1, end] = 0; p)
 adjust_pressure_rhs!(_, _) = nothing
 
 """
@@ -371,7 +403,6 @@ while the vertical component of the vector field are defined on I-nodes. An
 optional prefactor can be used to rescale the gradient before it is added.
 """
 function add_gradient!(vector_output, scalar_input, bc::BoundaryCondition{Nothing}, df, prefactor = 1)
-
     v1 = layers(vector_output[1])
     v2 = layers(vector_output[2])
     v3 = layers(vector_output[3])
@@ -379,9 +410,9 @@ function add_gradient!(vector_output, scalar_input, bc::BoundaryCondition{Nothin
     s = layers(scalar_input)
     s_expanded = layers_c2i(scalar_input, bc)
 
-    add_derivative!.(v1, s, (df.D1, ), prefactor)
-    add_derivative!.(v2, s, (df.D2, ), prefactor)
-    for i = 1:equivalently(length(v3), length(s_expanded)-1)
+    add_derivative!.(v1, s, (df.D1,), prefactor)
+    add_derivative!.(v2, s, (df.D2,), prefactor)
+    for i in 1:equivalently(length(v3), length(s_expanded) - 1)
         add_derivative!(v3[i], s_expanded[i:i+1], df.D3i[i], prefactor)
     end
 
@@ -392,5 +423,4 @@ end
 add_derivative!(f_out, f_in::AbstractArray, D, prefactor = 1) = @. f_out += prefactor * D * f_in
 
 # Vertical derivatives in frequency or physical domain
-add_derivative!(f_out, (f_in¯, f_in⁺)::Tuple, D, prefactor = 1) =
-        @. f_out += prefactor * (-D * f_in¯ + D * f_in⁺)
+add_derivative!(f_out, (f_in¯, f_in⁺)::Tuple, D, prefactor = 1) = @. f_out += prefactor * (-D * f_in¯ + D * f_in⁺)
