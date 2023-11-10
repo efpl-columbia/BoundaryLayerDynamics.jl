@@ -80,3 +80,51 @@ Contribution to the turbulent kinetic energy equation:
 \frac{\partial}{\partial t} \frac{\overline{u_i^\prime u_i^\prime}}{2} = …
 - \frac{\partial \overline{u_i^\prime \phi^\prime}}{\partial x_i}
 ```
+
+
+## Discrete Conservation Properties
+
+!!! tip "Conservation of Kinetic Energy"
+    The pressure term (including contributions from the rotational advection term) preserves the total kinetic energy to machine precision both without and with grid stretching (in the absence of time-integration errors).
+
+Analytically, we can show that the pressure term conserves energy using integration by parts (with vanishing ``u₃`` at the boundary) to show that
+
+```math
+\frac{∂}{∂t} \int_V \frac{u_i^2}{2} \mathrm{d}V
+= … − \int_V u_i \frac{∂ϕ}{∂x_i} \mathrm{d}V
+= … + \int_V ϕ \frac{∂u_i}{∂x_i} \mathrm{d}V
+\;,
+```
+
+which is zero due to the continuity equation.
+
+For the discretized equations we have
+
+```math
+\sum_{ζ_C} u₁(ζ_C) \left.\frac{∂ϕ}{∂x₁}\right|_{ζ_C} \left.\frac{∂x₃}{∂ζ}\right|_{ζ_C} +
+\sum_{ζ_C} u₂(ζ_C) \left.\frac{∂ϕ}{∂x₂}\right|_{ζ_C} \left.\frac{∂x₃}{∂ζ}\right|_{ζ_C} +
+\sum_{ζ_I} u₃(ζ_I) \left.\frac{∂ϕ}{∂x₃}\right|_{ζ_I} \left.\frac{∂x₃}{∂ζ}\right|_{ζ_I}
+= 0 \;.
+```
+
+For the horizontal derivatives, the integration by parts holds exactly since no approximations are made when computing derivatives or evaluating the horizontal mean.
+For the vertical derivatives, we can sum over ``ζ_C`` instead of ``ζ_I`` to get
+
+```math
+\sum_{ζ_I} u₃(ζ_I) \left(\frac{ϕ(ζ_I⁺) - ϕ(ζ_I⁻)}{Δζ} \left.\frac{∂ζ}{∂x₃}\right|_{ζ_I} \right) \left.\frac{∂x₃}{∂ζ}\right|_{ζ_I}
+= - \sum_{ζ_C} ϕ(ζ_C) \left( \frac{u₃(ζ_C⁺) - u₃(ζ_C⁻)}{Δζ} \left.\frac{∂ζ}{∂x₃}\right|_{ζ_C} \right) \left.\frac{∂x₃}{∂ζ}\right|_{ζ_C}
+```
+
+for any wavenumber (the grid-stretching terms cancel on both sides).
+The contributions therefore add up to
+
+```math
+- \sum_{ζ_C} ϕ(ζ_C) \left(
+\left.\frac{∂u₁}{∂x₁}\right|_{ζ_C} +
+\left.\frac{∂u₂}{∂x₂}\right|_{ζ_C} +
+\frac{u₃(ζ_C⁺) - u₃(ζ_C⁻)}{Δζ} \left.\frac{∂ζ}{∂x₃}\right|_{ζ_C}
+\right) \left.\frac{∂x₃}{∂ζ}\right|_{ζ_C}
+= 0
+```
+
+as the part in the parentheses is zero due to the discrete continuity equation.
