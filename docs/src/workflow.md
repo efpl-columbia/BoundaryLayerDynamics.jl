@@ -47,6 +47,34 @@ There are a number of options to use such a modified version of the package in s
     manually.
 
 
+## Running Automated Tests
+
+To (re-)run the automated tests, you can use the regular `Pkg.test("BoundaryLayerDynamics")` function or run `just test` if you have [`just`](https://just.systems/) installed.
+
+The default mode runs all in both serial mode and with 4 MPI processes, but the behavior can be modified with command-line arguments or the `test_args` argument of `Pkg.test`.
+To run only a subset of the `test/*_test.jl` files, list the names of the tests to run as arguments.
+With `--no-mpi`, the tests are only run in serial mode, whereas `--mpi=<number>` launches `<number>` MPI processes and skips the serial tests.
+For example:
+
+```
+$ just test --mpi=8 advection diffusion
+```
+
+If you want to run the tests with the package versions of your current project environment, add the argument `allow_reresolve=false` to `Pkg.test`.
+Otherwise the tests are run in a temporary environment that may not use the same package versions and the same MPI library.
+Note that this still cleans up the `LOAD_PATH` – use the following to directly run the tests in your unmodified environment.
+
+```julia
+import Pkg
+Pkg.add("MPI", preserve=Pkg.PRESERVE_ALL)
+Pkg.add("HDF5", preserve=Pkg.PRESERVE_ALL)
+Pkg.add("TimerOutputs", preserve=Pkg.PRESERVE_ALL)
+pkg = Base.identify_package("BoundaryLayerDynamics")
+dir = dirname(Base.locate_package(pkg))
+include(joinpath(dir, "..", "test", "runtests.jl"))
+```
+
+
 ## Interactive Use
 
 Once BoundaryLayerDynamics.jl is part of the project environment, it can be loaded with `using BoundaryLayerDynamics` as usual.
