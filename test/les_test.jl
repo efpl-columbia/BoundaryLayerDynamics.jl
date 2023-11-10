@@ -5,8 +5,6 @@ function test_closed_channel_les(n)
     gs = (n, n, n)
     ds = (2*π, 4/3*π, 2.0)
     ic = ((x,y,z)->u1, (x,y,z)->u2)
-    Re = 1e5
-    f = (1.0, 0.0)
 
     domain = Domain(ds, RoughWall(z0), RoughWall(z0))
     processes = [StaticSmagorinskyModel(wall_damping = false)]
@@ -24,14 +22,14 @@ function test_closed_channel_les(n)
     @test global_vector(rhs[2][1,1,:]) ≈ [1; zeros(n-2); 1] * τw * u2 / utot / (-ds[3]/n)
 
     # compute advection term for linear velocity field
-    dudz = 0.40595
+    dudz = 0.40595 # pseudo-random value
     initialize!(model, vel1 = (x,y,z) -> (z-1) * dudz)
     BLD.Processes.compute_rates!(rhs, model.state, 0.0, model.processes, model.physical_spaces)
 
     # check that eddy viscosity is correct
     S13 = S31 = 1/2 * (dudz + 0) # dw/dx == 0
     Stot = sqrt(2 * (S13^2 + S31^2)) # other entries of Sij are zero
-    Δ = cbrt(prod(ds ./ gs))
+    Δ = cbrt(prod(ds ./ (gs .+ isodd(n) .* (1, 1, 0)))) # physical-domain size uses even numbers
     νT = (Δ * 0.1)^2 * Stot
     @test global_vector(model.processes[].eddyviscosity_c[1,1,:])[2:end-1] ≈ νT * ones(n-2) # top & bottom rely on boundary condition
     @test global_vector(model.processes[].eddyviscosity_i[1,1,:]) ≈ νT * ones(n-1)
