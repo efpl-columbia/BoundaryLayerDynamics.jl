@@ -23,6 +23,26 @@ The process relies on boundary conditions for ``u₃``.
 MomentumAdvection
 ```
 
+
+## Discretization
+
+To compute the non-linear advection term, the velocity components $u_i$ as well as the vorticity components $ω_i$ are transformed to the physical domain.
+
+The contributions of the advection term become
+
+```math
+\begin{aligned}
+\frac{∂}{∂t} u₁(ζ_C) &= … + u₂(ζ_C) \, ω₃(ζ_C) - \frac{u₃(ζ_C⁻) \, ω₂(ζ_C⁻) + u₃(ζ_C⁺) \, ω₂(ζ_C⁺)}{2}
+\\
+\frac{∂}{∂t} u₂(ζ_C) &= … + \frac{u₃(ζ_C⁻) \, ω₁(ζ_C⁻) + u₃(ζ_C⁺) \, ω₁(ζ_C⁺)}{2} - u₁(ζ_C) \, ω₃(ζ_C)
+\\
+\frac{∂}{∂t} u₃(ζ_I) &= … + \frac{u₁(ζ_I⁻) + u₁(ζ_I⁺)}{2} \, ω₂(ζ_I) - \frac{u₂(ζ_I⁻) + u₂(ζ_I⁺)}{2} \, ω₁(ζ_I)
+\end{aligned}
+```
+
+where the values that are defined at the “wrong” set of nodes have been interpolated.
+
+
 ## Contributions to Budget Equations
 
 Contribution to the instantaneous momentum equation:
