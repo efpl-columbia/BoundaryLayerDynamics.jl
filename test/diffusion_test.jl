@@ -58,5 +58,5 @@ end
 
 @timeit "Diffusion" @testset "Molecular Diffusion" begin
     test_diffusion(16)
-    MPI.Initialized() && test_diffusion(MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_diffusion(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end

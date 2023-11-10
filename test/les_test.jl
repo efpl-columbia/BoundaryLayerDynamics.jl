@@ -71,5 +71,5 @@ function test_open_channel_les(n)
 end
 
 test_closed_channel_les(16)
-MPI.Initialized() && test_closed_channel_les(MPI.Comm_size(MPI.COMM_WORLD))
+MPI.Initialized() && test_closed_channel_les(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 test_open_channel_les(16)

@@ -99,6 +99,6 @@ end
     test_shifted_file_output()
 
     # also test the parallel version with one layer per process
-    MPI.Initialized() && test_file_io(n3=MPI.Comm_size(MPI.COMM_WORLD))
-    MPI.Initialized() && test_shifted_file_output(n3=MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_file_io(n3=max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    MPI.Initialized() && test_shifted_file_output(n3=max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end

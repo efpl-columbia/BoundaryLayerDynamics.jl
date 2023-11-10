@@ -245,6 +245,6 @@ end
     test_advection_exact(16)
 
     # also test the parallel version with one layer per process
-    MPI.Initialized() && test_advection_exact(MPI.Comm_size(MPI.COMM_WORLD))
-    test_advection_convergence(MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 8)
+    MPI.Initialized() && test_advection_exact(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    test_advection_convergence(MPI.Initialized() ? max(MPI.Comm_size(MPI.COMM_WORLD), 3) : 8)
 end

@@ -100,13 +100,13 @@ function test_constant_flux_poiseuille(nz)
 end
 
 @timeit "Laminar Flows" @testset "Laminar Flow Solutions" begin
+    n3min = MPI.Initialized() ? max(MPI.Comm_size(MPI.COMM_WORLD), 3) : 3
 
     # test that laminar flow solutions converge at the right order
-    test_laminar_flow_convergence(Float64, MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 3)
-    test_laminar_flow_convergence(Float64, MPI.Initialized() ? MPI.Comm_size(MPI.COMM_WORLD) : 3,
-                                  grid_stretching = true)
+    test_laminar_flow_convergence(Float64, n3min)
+    test_laminar_flow_convergence(Float64, n3min, grid_stretching = true)
 
     # test that a poiseuille flow driven by a constant flux converges faster
     test_constant_flux_poiseuille(16)
-    MPI.Initialized() && test_constant_flux_poiseuille(MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_constant_flux_poiseuille(n3min)
 end

@@ -36,13 +36,13 @@ end
 
 
 # compute vorticity in FS, transform, and check if it is correct
-function test_vorticity_fs()
+function test_vorticity_fs(n3 = 4)
 
     k = 2
     u0(x,y,z) = 0.856 * sin(k*x)
     vort3(x,y,z) = 0.856 * k * cos(k*x) # d/x1 vel2 - dx/2 vel1
 
-    dims = (12, 14, 4)
+    dims = (12, 14, n3)
     domain = Domain((2*π, 2*π, 1.0), SmoothWall(), SmoothWall())
     model = Model(dims, domain, [Vorticity(vort3 = vort3)])
 
@@ -52,5 +52,7 @@ function test_vorticity_fs()
 end
 
 @timeit "Derivatives" @testset "Spatial Derivatives" begin
-    test_vorticity_fs()
+    # have at least one layer per process
+    n = MPI.Initialized() ? max(MPI.Comm_size(MPI.COMM_WORLD), 3) : 3
+    test_vorticity_fs(n)
 end

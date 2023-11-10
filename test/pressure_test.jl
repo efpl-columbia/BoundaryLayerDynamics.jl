@@ -78,6 +78,6 @@ end
 @timeit "Pressure" @testset "Pressure Solver" begin
     test_batch_ldlt(16)
     test_pressure_solver(16)
-    MPI.Initialized() && test_batch_ldlt(MPI.Comm_size(MPI.COMM_WORLD))
-    MPI.Initialized() && test_pressure_solver(MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_batch_ldlt(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
+    MPI.Initialized() && test_pressure_solver(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end

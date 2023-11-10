@@ -41,5 +41,5 @@ end
 
     # test that a channel flow with output runs without error
     test_channel(16)
-    MPI.Initialized() && test_channel(MPI.Comm_size(MPI.COMM_WORLD))
+    MPI.Initialized() && test_channel(max(MPI.Comm_size(MPI.COMM_WORLD), 3))
 end
