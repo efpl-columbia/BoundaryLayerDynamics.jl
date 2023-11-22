@@ -27,7 +27,7 @@ function test_diffusion(NZ)
     rhs = deepcopy(model.state)
 
     # initialize values after resetting arrays with some arbitrary value
-    #map(a -> fill!(a, rand(eltype(a))), [values(model.state)..., values(rhs)...])
+    map(a -> fill!(a, rand(eltype(a))), [values(model.state)..., values(rhs)...])
     initialize!(model; vel1 = u0n, vel2 = u0d, vel3 = u0d)
 
     # compute diffusion
@@ -39,7 +39,6 @@ function test_diffusion(NZ)
     x3i = global_vector(coordinates(model, :vel3, 3))
 
     # check 2nd derivative for C-nodes with Neumann BCs
-    #@test global_vector(model[:vel1][5,8,:]) ≈ ν * [Lu0n(2*π*4/18, 2*π*7/21, x3) for x3=coordinates(model, :vel1, 3)]
     result = BLD.PhysicalSpace.get_field(model.physical_spaces[dims[1:2]].transform, rhs[:vel1])
     @test global_vector(result[isample..., :]) ≈ ν * [Lu0n(xsample..., x3) for x3 in x3c]
 

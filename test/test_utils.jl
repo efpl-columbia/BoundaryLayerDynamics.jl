@@ -83,7 +83,8 @@ end
 # number of MPI ranks, in order to collect test results and avoid printing
 # errors multiple times from different ranks
 
-printall(vars...) = if MPI.Initialized()
+printall(vars...) =
+    if MPI.Initialized()
         for i in 1:MPI.Comm_size(MPI.COMM_WORLD)
             i == MPI.Comm_rank(MPI.COMM_WORLD) + 1 && println("process ", i, ": ", vars...)
             MPI.Barrier(MPI.COMM_WORLD)
@@ -92,7 +93,8 @@ printall(vars...) = if MPI.Initialized()
         println(vars...)
     end
 
-show_all(var) = for i in 1:MPI.Comm_size(MPI.COMM_WORLD)
+show_all(var) =
+    for i in 1:MPI.Comm_size(MPI.COMM_WORLD)
         i == MPI.Comm_rank(MPI.COMM_WORLD) + 1 && show(var)
         MPI.Barrier(MPI.COMM_WORLD)
     end

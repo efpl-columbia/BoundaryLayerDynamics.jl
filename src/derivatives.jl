@@ -120,13 +120,15 @@ end
 # → boundary conditions: only Dirichlet on I-nodes supported
 dx3_c2i!(dx3, (term¯, term⁺), D3i) = @. dx3 = -D3i * term¯ + D3i * term⁺
 dx3_i2c!(dx3, (term¯, term⁺), D3c) = @. dx3 = -D3c * term¯ + D3c * term⁺
-dx3_i2c!(dx3, (lbc, term⁺)::Tuple{ConstantValue,A}, D3) where {A} = if eltype(dx3) <: Real # physical domain
+dx3_i2c!(dx3, (lbc, term⁺)::Tuple{ConstantValue,A}, D3) where {A} =
+    if eltype(dx3) <: Real # physical domain
         @. dx3 = -D3 * lbc.value + D3 * term⁺
     else
         @. dx3 = D3 * term⁺
         dx3[1, 1] -= D3 * lbc.value
     end
-dx3_i2c!(dx3, (term¯, ubc)::Tuple{A,ConstantValue}, D3) where {A} = if eltype(dx3) <: Real # physical domain
+dx3_i2c!(dx3, (term¯, ubc)::Tuple{A,ConstantValue}, D3) where {A} =
+    if eltype(dx3) <: Real # physical domain
         @. dx3 = -D3 * term¯ + D3 * ubc.value
     else
         @. dx3 = -D3 * term¯

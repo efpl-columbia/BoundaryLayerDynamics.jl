@@ -65,7 +65,6 @@ function test_shifted_file_output(T = Float64; n1 = 6, n2 = 8, n3 = 12)
     x1 = collect(LinRange(0, ds[1], 2 * pdims[1] + 1)[2:2:end-1])
     x2 = collect(LinRange(0, ds[2], 2 * pdims[2] + 1)[2:2:end-1])
     x3 = collect(LinRange(0, ds[3], 2 * n3 + 1)[2:end-1]) # both sets of nodes
-    #x3local = x3[grid.i3min:min(grid.i3max, length(x3))]
 
     transform = BLD.PhysicalSpace.Transform2D(T, pdims)
 

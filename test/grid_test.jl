@@ -1,4 +1,5 @@
-i3_range_from_neighbors(gd) = if MPI.Initialized()
+i3_range_from_neighbors(gd) =
+    if MPI.Initialized()
         c = MPI.COMM_WORLD
         r, s = MPI.Comm_rank(c), MPI.Comm_size(c)
         r < s - 1 && MPI.Send(gd.i3max, r + 1, 1, c)

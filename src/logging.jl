@@ -37,8 +37,8 @@ struct Log
 end
 
 reset!(log::Log, t) = @timeit log.timer "Output" for output in log.output
-        reset!(output, t)
-    end
+    reset!(output, t)
+end
 # default for output types and for log=nothing
 reset!(opts...) = nothing
 
@@ -55,26 +55,26 @@ end
 flush!(opts...) = nothing
 
 process_log!(log::Log, rates, t) = @timeit log.timer "Output" for output in log.output
-        process_log!(output, rates, t)
-    end
+    process_log!(output, rates, t)
+end
 # default for output types and for log=nothing
 process_log!(opts...) = nothing
 
 log_sample!(log::Log, sample, t; kwargs...) = @timeit log.timer "Output" for output in log.output
-        log_sample!(output, sample, t; kwargs...)
-    end
+    log_sample!(output, sample, t; kwargs...)
+end
 # default for output types and for log=nothing
 log_sample!(opts...; kwargs...) = nothing
 
 log_state!(log::Log, state, t) = @timeit log.timer "Output" for output in log.output
-        log_state!(output, state, t)
-    end
+    log_state!(output, state, t)
+end
 # default for output types and for log=nothing
 log_state!(opts...) = nothing
 
 prepare_samples!(log::Log, t) = @timeit log.timer "Output" for output in log.output
-        prepare_samples!(output, t)
-    end
+    prepare_samples!(output, t)
+end
 # default for output types and for log=nothing
 prepare_samples!(opts...) = nothing
 
