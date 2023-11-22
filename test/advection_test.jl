@@ -177,6 +177,9 @@ function test_advection_exact(NZ)
 end
 
 function advection_error_convergence(Nh, Nv)
+    Nh_eval = (32, 32) # horizontal resolution at which errors are evaluated
+    Nmax = (16, 16, 256) # grid size when it is not varied
+
     domain = Domain((2 * π, 2 * π, 1.0), SmoothWall(), SmoothWall())
     processes = [MomentumAdvection()]
 
@@ -211,46 +214,26 @@ function advection_error_convergence(Nh, Nv)
     adv2(x, y, z) = -rotz(x, y, z) * u0(x, y, z) + rotx(x, y, z) * w0(x, y, z)
     adv3(x, y, z) = -rotx(x, y, z) * v0(x, y, z) + roty(x, y, z) * u0(x, y, z)
 
+    # always evaluate results at the same horizontal grid points for better consistency
+    transf = BLD.PhysicalSpace.Transform2D(Float64, Nh_eval)
+    get(field) = BLD.PhysicalSpace.get_field(transf, field)
+    x1 = BLD.Domains.x1range(domain, BLD.PhysicalSpace.h1range(Nh_eval))
+    x2 = BLD.Domains.x2range(domain, BLD.PhysicalSpace.h2range(Nh_eval))
+
     function get_errors(Nx, Ny, Nz)
         model = Model((Nx, Ny, Nz), domain, processes)
         rhs = deepcopy(model.state)
-
-        # create arrays with exact solution (in frequency space)
-        adv = deepcopy(model.state)
-        pddims = BLD.PhysicalSpace.pdsize(model.grid, :quadratic)
-        BLD.PhysicalSpace.set_field!(
-            adv1,
-            adv[:vel1],
-            model.physical_spaces[pddims].transform,
-            model.domain,
-            model.grid,
-            BLD.Grids.nodes(:vel1),
-        )
-        BLD.PhysicalSpace.set_field!(
-            adv2,
-            adv[:vel2],
-            model.physical_spaces[pddims].transform,
-            model.domain,
-            model.grid,
-            BLD.Grids.nodes(:vel2),
-        )
-        BLD.PhysicalSpace.set_field!(
-            adv3,
-            adv[:vel3],
-            model.physical_spaces[pddims].transform,
-            model.domain,
-            model.grid,
-            BLD.Grids.nodes(:vel3),
-        )
 
         # set up velocity field and compute advection term
         initialize!(model; vel1 = u0, vel2 = v0, vel3 = w0)
         BLD.Processes.compute_rates!(rhs, model.state, 0.0, model.processes, model.physical_spaces)
 
-        # measure error in frequency space
-        ε1 = global_maximum(abs.(rhs[:vel1] .- adv[:vel1]))
-        ε2 = global_maximum(abs.(rhs[:vel2] .- adv[:vel2]))
-        ε3 = global_maximum(abs.(rhs[:vel3] .- adv[:vel3]))
+        # measure error in physical space
+        err(field, exact) =
+            abs.(get(rhs[field]) .- (exact(x, y, z) for x in x1, y in x2, z in coordinates(model, field, 3)))
+        ε1 = global_maximum(err(:vel1, adv1))
+        ε2 = global_maximum(err(:vel2, adv2))
+        ε3 = global_maximum(err(:vel3, adv3))
 
         ε1, ε2, ε3
     end
@@ -259,32 +242,27 @@ function advection_error_convergence(Nh, Nv)
     εy = zeros(length(Nh), 3)
     εz = zeros(length(Nv), 3)
 
-    for i in 1:length(Nh)-1
-        εx[i, :] .= get_errors(Nh[i], Nh[end], Nv[end])
-        εy[i, :] .= get_errors(Nh[end], Nh[i], Nv[end])
+    for i in 1:length(Nh)
+        εx[i, :] .= get_errors(Nh[i], Nmax[2], Nmax[3])
+        εy[i, :] .= get_errors(Nmax[1], Nh[i], Nmax[3])
     end
 
-    for i in 1:length(Nv)-1
-        εz[i, :] .= get_errors(Nh[end], Nh[end], Nv[i])
+    for i in 1:length(Nv)
+        εz[i, :] .= get_errors(Nmax[1], Nmax[2], Nv[i])
     end
-
-    ε = get_errors(Nh[end], Nh[end], Nv[end])
-    εx[end, :] .= ε
-    εy[end, :] .= ε
-    εz[end, :] .= ε
 
     εx, εy, εz
 end
 
 function test_advection_convergence(Nz_min)
     Nh = [2 * n for n in 1:5]
-    Nv = [2^n for n in ceil(Int, log2(Nz_min)):8]
+    Nv = [2^n for n in ceil(Int, log2(Nz_min)):7]
 
     ε1, ε2, ε3 = advection_error_convergence(Nh, Nv)
 
     for i in 1:3
-        #test_convergence(Nh[1:end-1], ε1[1:end-1,i], exponential=true) # TODO: check convergence
-        #test_convergence(Nh[1:end-1], ε2[1:end-1,i], exponential=true) # TODO: check convergence
+        test_convergence(Nh, ε1[:, i]; exponential = true)
+        test_convergence(Nh, ε2[:, i]; exponential = true)
         test_convergence(Nv, ε3[:, i]; order = 2)
     end
 
