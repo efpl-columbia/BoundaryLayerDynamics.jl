@@ -31,5 +31,7 @@ It also documents how the time integration handles processes that are assumed to
 
 You can obtain the code, report issues, or suggest improvements in the [GitHub repository](https://github.com/efpl-columbia/BoundaryLayerDynamics.jl).
 
-A paper describing the motivation for the project, the mathematical and physical models, their validation, as well as some performance measurements is currently under review and can be accessed [here](https://doi.org/10.5194/egusphere-2023-1071).
-Please cite this preprint if you use BoundaryLayerDynamics.jl in your research.
+A paper describing the motivation for the project, the mathematical and physical models, their validation, as well as some performance measurements has been published in *Geoscientific Model Development*.
+Please cite this work if you use BoundaryLayerDynamics.jl in your research:
+
+> Schmid, M. F., Giometto, M. G., Lawrence, G. A., and Parlange, M. B. (2024). BoundaryLayerDynamics.jl v1.0: a modern codebase for atmospheric boundary-layer simulations. [*Geosci. Model Dev.*, 17, 321–333](https://doi.org/10.5194/gmd-17-321-2024).

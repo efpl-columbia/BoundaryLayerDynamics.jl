@@ -16,11 +16,13 @@ If you don’t have [`just`](https://just.systems/) installed, you can also manu
 
 ## Attribution & License
 
-[![Preprint](https://img.shields.io/badge/Preprint-10.5194%2Fegusphere--2023--1071-8E0F56)](https://doi.org/10.5194/egusphere-2023-1071)
+[![Citation](https://img.shields.io/badge/Citation-10.5194%2Fgmd--17--321--2024-8E0F56)](https://doi.org/10.5194/gmd-17-321-2024)
 [![MIT License](https://img.shields.io/badge/License-MIT-D2D2C0)](./LICENSE.md)
 
 BoundaryLayerDynamics.jl was created by [Manuel F. Schmid](https://orcid.org/0000-0002-7880-9913) in collaboration with [Marco G. Giometto](https://orcid.org/0000-0001-9661-0599) and [Marc B. Parlange](https://orcid.org/0000-0001-6972-4371).
-A paper describing the motivation for the project, the mathematical and physical models, their validation, as well as some performance measurements will be published in [GMD](https://www.geoscientific-model-development.net/).
-Please cite [this preprint](https://doi.org/10.5194/egusphere-2023-1071) if you use BoundaryLayerDynamics.jl in your research.
+A paper describing the motivation for the project, the mathematical and physical models, their validation, as well as some performance measurements has been published in *Geoscientific Model Development*.
+Please cite this work if you use BoundaryLayerDynamics.jl in your research:
+
+> Schmid, M. F., Giometto, M. G., Lawrence, G. A., and Parlange, M. B. (2024). BoundaryLayerDynamics.jl v1.0: a modern codebase for atmospheric boundary-layer simulations. [*Geosci. Model Dev.*, 17, 321–333](https://doi.org/10.5194/gmd-17-321-2024).
 
 BoundaryLayerDynamics.jl is freely available under the terms of the [MIT License](./LICENSE.md).
